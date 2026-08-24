@@ -13,7 +13,6 @@ pub struct GpuSearcher {
     function: cudarc::driver::CudaFunction,
     d_seed: CudaSlice<u8>,
     d_prefix: CudaSlice<u8>,
-    d_attempts: CudaSlice<u64>,
     d_found: CudaSlice<i32>,
     d_private: CudaSlice<u8>,
     d_public: CudaSlice<u8>,
@@ -27,14 +26,21 @@ pub struct BatchResult {
 
 impl GpuSearcher {
     pub fn new() -> Result<Self, DriverError> {
-        let context = CudaContext::new(0)?;
+        Self::new_on_device(0)
+    }
+
+    pub fn device_count() -> Result<usize, DriverError> {
+        Ok(CudaContext::device_count()?.max(0) as usize)
+    }
+
+    pub fn new_on_device(device: usize) -> Result<Self, DriverError> {
+        let context = CudaContext::new(device)?;
         let stream = context.default_stream();
         let ptx = Ptx::from_src(std::str::from_utf8(PTX).expect("nvcc emitted non-UTF-8 PTX"));
         let module = context.load_module(ptx)?;
         let function = module.load_function("vanity_kernel")?;
         let d_seed = stream.clone_htod(&[0u8; 32])?;
         let d_prefix = stream.clone_htod(&[0u8; 44])?;
-        let d_attempts = stream.clone_htod(&[0u64])?;
         let d_found = stream.clone_htod(&[-1i32])?;
         let d_private = stream.clone_htod(&[0u8; 32])?;
         let d_public = stream.clone_htod(&[0u8; 32])?;
@@ -44,7 +50,6 @@ impl GpuSearcher {
             function,
             d_seed,
             d_prefix,
-            d_attempts,
             d_found,
             d_private,
             d_public,
@@ -80,7 +85,6 @@ impl GpuSearcher {
         prefix_host[..prefix_bytes.len()].copy_from_slice(prefix_bytes);
         self.stream.memcpy_htod(&seed, &mut self.d_seed)?;
         self.stream.memcpy_htod(&prefix_host, &mut self.d_prefix)?;
-        self.stream.memcpy_htod(&[0u64], &mut self.d_attempts)?;
         self.stream.memcpy_htod(&[-1i32], &mut self.d_found)?;
 
         let cfg = LaunchConfig {
@@ -99,14 +103,12 @@ impl GpuSearcher {
             .arg(&prefix_len)
             .arg(&start)
             .arg(&end)
-            .arg(&mut self.d_attempts)
             .arg(&mut self.d_found)
             .arg(&mut self.d_private)
             .arg(&mut self.d_public);
         unsafe { args.launch(cfg)? };
         self.stream.synchronize()?;
 
-        let attempts = self.stream.clone_dtoh(&self.d_attempts)?[0];
         let found = self.stream.clone_dtoh(&self.d_found)?[0];
         let candidate = if found >= 0 {
             let private = self.stream.clone_dtoh(&self.d_private)?;
@@ -116,7 +118,7 @@ impl GpuSearcher {
             None
         };
         Ok(BatchResult {
-            attempts,
+            attempts: batch,
             candidate,
         })
     }

@@ -38,6 +38,15 @@ CUDA_HOME=/usr/local/cuda-13.3 \
   ./target/release/wireguard-vanity-address-cuda dave --batch 1048576
 ```
 
+The CUDA binary reports an estimated candidate count and expected time after
+it measures the first batch. It automatically uses all CUDA devices visible to
+the process; set `CUDA_VISIBLE_DEVICES` to restrict that set.
+Use `--gpus N` to use only N of the visible devices.
+
+MPI support is optional. Build with the `mpi` feature and launch with the
+MPI/Slurm environment appropriate for the cluster; each rank uses its local
+GPUs and rank 0 reports aggregate throughput.
+
 CPU and CUDA searches run until a match is found or interrupted with `Ctrl-C`.
 Use limits for bounded runs:
 
@@ -89,9 +98,9 @@ One long-batch run on 2026-08-24:
 | CPU + Rayon | 16,000,000 | 3.517 s | 4.55 M keys/s |
 | CUDA + Rust host | 16,000,000 | 0.337 s | 47.54 M keys/s |
 
-The CUDA number includes per-batch copies, kernel launch, synchronization, and
-counter readback, but excludes initial CUDA context creation. This is about
-10.45x faster than the CPU path.
+The CUDA number includes per-batch copies, kernel launch, and synchronization,
+but excludes initial CUDA context creation. This is about 10.45x faster than
+the CPU path.
 
 The initial 16-limb kernel used 255 registers per thread and generated 48B of
 spill stores and loads. The current version uses 5x51-bit field limbs,

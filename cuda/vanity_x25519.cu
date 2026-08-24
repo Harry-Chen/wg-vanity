@@ -383,25 +383,24 @@ __device__ bool prefix_match(const uint8_t encoded[44], const uint8_t *prefix,
 extern "C" __global__ void vanity_kernel(const uint8_t *seed, u64 base_counter, u64 count,
                                           const uint8_t *prefix, uint32_t prefix_len,
                                           uint32_t start, uint32_t end,
-                                          u64 *attempts, int *found,
+                                          int *found,
                                           uint8_t *private_out, uint8_t *public_out) {
   const u64 tid = (u64)blockIdx.x * blockDim.x + threadIdx.x;
-  if (tid >= count) return;
-  atomicAdd(attempts, 1ULL);
-  if (*found >= 0) return;
+  const bool active = tid < count && *found < 0;
 
   uint8_t private_key[32], public_key[32], encoded[44], stream[64];
-  chacha20_block(stream, seed, base_counter + tid);
-  for (int i = 0; i < 32; ++i) private_key[i] = stream[i];
-  const uint8_t basepoint[32] = {9};
-  x25519(public_key, private_key, basepoint);
-  base64_32(encoded, public_key);
-  if (!prefix_match(encoded, prefix, prefix_len, start, end)) return;
-
-  if (atomicCAS(found, -1, (int)tid) == -1) {
-    for (int i = 0; i < 32; ++i) {
-      private_out[i] = private_key[i];
-      public_out[i] = public_key[i];
+  if (active) {
+    chacha20_block(stream, seed, base_counter + tid);
+    for (int i = 0; i < 32; ++i) private_key[i] = stream[i];
+    const uint8_t basepoint[32] = {9};
+    x25519(public_key, private_key, basepoint);
+    base64_32(encoded, public_key);
+    if (prefix_match(encoded, prefix, prefix_len, start, end) &&
+        atomicCAS(found, -1, (int)tid) == -1) {
+      for (int i = 0; i < 32; ++i) {
+        private_out[i] = private_key[i];
+        public_out[i] = public_key[i];
+      }
     }
   }
 }
