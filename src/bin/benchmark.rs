@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::time::Instant;
-use wireguard_vanity_lib::trial;
+use wg_vanity::trial;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Compare CPU and CUDA vanity-key throughput")]
@@ -50,7 +50,7 @@ fn benchmark_cpu(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(feature = "cuda")]
 fn benchmark_cuda(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
-    use wireguard_vanity_lib::cuda::GpuSearcher;
+    use wg_vanity::cuda::GpuSearcher;
     let end = 44.min(args.prefix.len().max(10));
     let mut gpu = GpuSearcher::new().map_err(|e| format!("CUDA initialization failed: {e:?}"))?;
     let start = Instant::now();

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
-use wireguard_vanity_lib::cuda::GpuSearcher;
+use wg_vanity::cuda::GpuSearcher;
 
 #[cfg(feature = "mpi")]
 use mpi::traits::*;

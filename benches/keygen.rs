@@ -1,72 +1,54 @@
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use rayon::prelude::*;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use wireguard_vanity_lib::trial;
+use wg_vanity::trial;
 
-fn b1_point_generation(c: &mut Criterion) {
-    c.bench_function("b1_point_generation", |b| b.iter(StaticSecret::random));
-}
-
-fn b2a_point_conversion(c: &mut Criterion) {
-    let private = StaticSecret::random();
-    c.bench_function("b2a_point_conversion", |b| {
-        b.iter(|| PublicKey::from(&private))
-    });
-}
-
-fn b2b_point_to_bytes(c: &mut Criterion) {
-    let private = StaticSecret::random();
-    let public = PublicKey::from(&private);
-    c.bench_function("b2b_point_to_bytes", |b| b.iter(|| public.as_bytes()));
-}
-
-fn b2c_bytes_to_base64(c: &mut Criterion) {
-    let private = StaticSecret::random();
-    let public = PublicKey::from(&private);
-    let public_bytes = public.as_bytes();
-    c.bench_function("b2c_bytes_to_base64", |b| {
-        b.iter(|| STANDARD.encode(black_box(public_bytes)))
-    });
-}
-
-fn b2d_base64_contains(c: &mut Criterion) {
+fn candidate_stages(c: &mut Criterion) {
+    let mut group = c.benchmark_group("candidate");
     let private = StaticSecret::random();
     let public = PublicKey::from(&private);
     let public_b64 = STANDARD.encode(public.as_bytes());
-    c.bench_function("b2d_base64_contains", |b| {
-        b.iter(|| public_b64[0..10].to_ascii_lowercase().contains("****"))
-    });
-}
 
-fn b2e_total_point_checking(c: &mut Criterion) {
-    c.bench_function("b2e_total_point_checking", |b| {
+    group.bench_function("private_key", |b| b.iter(StaticSecret::random));
+    group.bench_function("x25519_public_key", |b| {
+        b.iter(|| PublicKey::from(black_box(&private)))
+    });
+    group.bench_function("base64_public_key", |b| {
+        b.iter(|| STANDARD.encode(black_box(public.as_bytes())))
+    });
+    group.bench_function("case_insensitive_match", |b| {
         b.iter(|| {
-            let private = StaticSecret::random();
-            let public = PublicKey::from(&private);
-            let public_b64 = STANDARD.encode(public.as_bytes());
-            public_b64[0..10].to_ascii_lowercase().contains("****")
+            black_box(&public_b64[0..10])
+                .to_ascii_lowercase()
+                .contains("****")
         })
     });
-}
-
-fn b3_point_generation_and_checking(c: &mut Criterion) {
-    let prefix: &str = "****";
-    c.bench_function("b3_point_generation_and_checking", |b| {
-        b.iter(|| trial(&prefix, 0, 10))
+    group.bench_function("complete_no_match", |b| {
+        b.iter(|| trial(black_box("****"), 0, 10))
     });
+    group.finish();
 }
 
-criterion_group!(
-    benches,
-    b1_point_generation,
-    b2a_point_conversion,
-    b2b_point_to_bytes,
-    b2c_bytes_to_base64,
-    b2d_base64_contains,
-    b2e_total_point_checking,
-    b3_point_generation_and_checking,
-);
+fn cpu_search_batches(c: &mut Criterion) {
+    const BATCH_SIZES: [u64; 3] = [1, 1_000, 100_000];
+    let mut group = c.benchmark_group("cpu_search");
+    for batch in BATCH_SIZES {
+        group.throughput(Throughput::Elements(batch));
+        group.bench_with_input(BenchmarkId::from_parameter(batch), &batch, |b, &batch| {
+            b.iter(|| {
+                (0..batch)
+                    .into_par_iter()
+                    .filter_map(|_| trial("****", 0, 10))
+                    .count()
+            })
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, candidate_stages, cpu_search_batches);
 criterion_main!(benches);

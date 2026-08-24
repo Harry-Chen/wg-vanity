@@ -4,16 +4,21 @@ use std::io::{self, Write};
 use std::time::{Duration, Instant, SystemTime};
 
 use clap::Parser;
-use num_cpus;
 use rayon::prelude::*;
-use wireguard_vanity_lib::trial;
+use wg_vanity::trial;
+
+#[cfg(feature = "mpi")]
+use mpi::traits::*;
+
+#[cfg(feature = "mpi")]
+const MPI_SUMMARY_TAG: i32 = 801;
 
 fn estimate_one_trial() -> Duration {
     let prefix = "prefix";
     let start = SystemTime::now();
     const COUNT: u32 = 100;
     (0..COUNT).for_each(|_| {
-        trial(&prefix, 0, 10);
+        trial(prefix, 0, 10);
     });
     let elapsed = start.elapsed().unwrap();
     elapsed.checked_div(COUNT).unwrap()
@@ -66,8 +71,8 @@ fn print(res: (String, String)) -> Result<(), io::Error> {
     writeln!(
         io::stdout(),
         "private {}  public {}",
-        &private_b64,
-        &public_b64
+        private_b64,
+        public_b64
     )
 }
 
@@ -104,6 +109,17 @@ struct Args {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    #[cfg(feature = "mpi")]
+    let universe = mpi::initialize().ok_or("MPI was already initialized")?;
+    #[cfg(feature = "mpi")]
+    let world = universe.world();
+    #[cfg(feature = "mpi")]
+    let rank = world.rank();
+    #[cfg(feature = "mpi")]
+    let root = rank == 0;
+    #[cfg(not(feature = "mpi"))]
+    let root = true;
+
     let args = Args::parse();
     let prefix = args.name.to_ascii_lowercase();
     let len = prefix.len();
@@ -121,55 +137,70 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(ParseError("--duration must be a finite positive number".into()).into());
     }
 
-    let offsets: u64 = 44.min((1 + end - len) as u64);
-    // todo: this is an approximation, offsets=2 != double the chances
-    let mut num = offsets;
-    let mut denom = 1u64;
-    prefix.chars().for_each(|c| {
-        if c.is_ascii_alphabetic() {
-            num *= 2; // letters can match both uppercase and lowercase
-        }
-        denom *= 64; // base64
-    });
-    let trials_per_key = denom / num;
+    let offsets = 1 + end - len;
+    let casefolded_letters = prefix.bytes().filter(|c| c.is_ascii_alphabetic()).count();
+    let trials_per_key =
+        64_f64.powi(len as i32) / (offsets as f64 * 2_f64.powi(casefolded_letters as i32));
+    let trials_description = if trials_per_key < 1_000_000.0 {
+        format!("{trials_per_key:.0}")
+    } else {
+        format!("{trials_per_key:.3e}")
+    };
 
-    println!(
-        "searching for '{}' in pubkey[0..{}], one of every {} keys should match",
-        &prefix, end, trials_per_key
-    );
+    if root {
+        println!(
+            "searching for '{}' in pubkey[0..{}], one of every {} keys should match",
+            prefix, end, trials_description
+        );
+    }
 
-    // todo: dividing by num_cpus will overestimate performance when the
-    // cores aren't actually distinct (hyperthreading?). My Core-i7 seems to
-    // run at half the speed that this predicts.
-
-    if trials_per_key < 2u64.pow(32) {
+    if trials_per_key < 2_f64.powi(32) {
         let est = estimate_one_trial();
-        println!(
-            "one trial takes {}, CPU cores available: {}",
-            format_time(duration_to_f64(est)),
-            num_cpus::get()
-        );
-        let spk = duration_to_f64(
-            est // sec/trial on one core
-                .checked_div(num_cpus::get() as u32) // sec/trial with all cores
-                .unwrap()
-                .checked_mul(trials_per_key as u32) // sec/key (Duration)
-                .unwrap(),
-        );
+        #[cfg(feature = "mpi")]
+        let parallelism = num_cpus::get().saturating_mul(world.size() as usize);
+        #[cfg(not(feature = "mpi"))]
+        let parallelism = num_cpus::get();
+        let spk = duration_to_f64(est) * trials_per_key / parallelism as f64;
         let kps = 1.0 / spk;
-        println!(
-            "est yield: {} per key, {}",
-            format_time(spk),
-            format_rate(kps)
-        );
+        if root {
+            #[cfg(feature = "mpi")]
+            println!(
+                "one trial takes {}, {} CPU cores/rank, {} MPI ranks",
+                format_time(duration_to_f64(est)),
+                num_cpus::get(),
+                world.size()
+            );
+            #[cfg(not(feature = "mpi"))]
+            println!(
+                "one trial takes {}, CPU cores available: {}",
+                format_time(duration_to_f64(est)),
+                num_cpus::get()
+            );
+            println!(
+                "est yield: {} per key, {}",
+                format_time(spk),
+                format_rate(kps)
+            );
+        }
     }
 
     let started = Instant::now();
     let deadline = args
         .duration
         .map(|seconds| started + Duration::from_secs_f64(seconds));
-    let max_trials = args.trials.unwrap_or(u64::MAX);
-    println!("searching until a match, a limit, or Ctrl-C");
+    let global_max_trials = args.trials.unwrap_or(u64::MAX);
+    #[cfg(feature = "mpi")]
+    let max_trials = if global_max_trials == u64::MAX {
+        u64::MAX
+    } else {
+        let ranks = world.size() as u64;
+        global_max_trials / ranks + u64::from((rank as u64) < global_max_trials % ranks)
+    };
+    #[cfg(not(feature = "mpi"))]
+    let max_trials = global_max_trials;
+    if root {
+        println!("searching until a match, a limit, or Ctrl-C");
+    }
 
     const CPU_BATCH: u64 = 100_000;
     let mut attempted = 0u64;
@@ -185,10 +216,33 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         attempted += count;
     }
-    println!(
-        "stopped after {} candidates in {:.3}s",
-        attempted,
-        started.elapsed().as_secs_f64()
-    );
+    let elapsed = started.elapsed().as_secs_f64();
+    #[cfg(feature = "mpi")]
+    if root {
+        let mut global_attempted = attempted;
+        let mut global_elapsed = elapsed;
+        for source in 1..world.size() {
+            let (summary, _) = world
+                .process_at_rank(source)
+                .receive_vec_with_tag::<u64>(MPI_SUMMARY_TAG);
+            if summary.len() != 2 {
+                return Err(format!("MPI rank {source} sent an invalid summary").into());
+            }
+            global_attempted = global_attempted.saturating_add(summary[0]);
+            global_elapsed = global_elapsed.max(f64::from_bits(summary[1]));
+        }
+        println!(
+            "MPI: {} ranks stopped after {} candidates in {:.3}s",
+            world.size(),
+            global_attempted,
+            global_elapsed
+        );
+    } else {
+        world
+            .process_at_rank(0)
+            .send_with_tag(&[attempted, elapsed.to_bits()], MPI_SUMMARY_TAG);
+    }
+    #[cfg(not(feature = "mpi"))]
+    println!("stopped after {attempted} candidates in {elapsed:.3}s");
     Ok(())
 }

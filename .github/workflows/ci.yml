@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cpu:
+    name: CPU
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: clippy, rustfmt
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo bench --locked --no-run
+      - run: cargo run --locked --bin wg-vanity -- zzzzzzzzzzzzzzzz --trials 1000
+
+  mpi:
+    name: CPU + MPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: mpi4py/setup-mpi@v1
+        with:
+          mpi: openmpi
+      - run: cargo clippy --locked --features mpi --all-targets -- -D warnings
+      - run: cargo test --locked --features mpi
+      - run: cargo build --locked --features mpi --bin wg-vanity
+      - run: mpiexec -n 2 ./target/debug/wg-vanity zzzzzzzzzzzzzzzz --trials 2000
+
+  cuda:
+    name: CUDA build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: mpi4py/setup-mpi@v1
+        with:
+          mpi: openmpi
+      - name: Install CUDA compiler
+        id: cuda-toolkit
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: 13.2.0
+          method: network
+          sub-packages: '["nvcc"]'
+      - name: Build CUDA backend
+        env:
+          CUDA_HOME: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
+          CUDA_ARCH: compute_80
+        run: cargo build --locked --features cuda --bin wg-vanity-cuda
+      - name: Build CUDA and MPI backend
+        env:
+          CUDA_HOME: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
+          CUDA_ARCH: compute_80
+        run: cargo test --locked --features cuda,mpi --no-run

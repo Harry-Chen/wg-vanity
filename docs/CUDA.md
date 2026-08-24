@@ -25,17 +25,17 @@ CPU:
 
 ```bash
 cargo test
-cargo run --release --bin wireguard-vanity-address -- dave
+cargo run --release --bin wg-vanity -- dave
 ```
 
 CUDA on RTX 5090/Blackwell:
 
 ```bash
 CUDA_HOME=/usr/local/cuda-13.3 \
-  cargo build --release --features cuda --bin wireguard-vanity-address-cuda
+  cargo build --release --features cuda --bin wg-vanity-cuda
 
 CUDA_HOME=/usr/local/cuda-13.3 \
-  ./target/release/wireguard-vanity-address-cuda dave --batch 1048576
+  ./target/release/wg-vanity-cuda dave --batch 1048576
 ```
 
 The CUDA binary reports an estimated candidate count and expected time after
@@ -43,25 +43,25 @@ it measures the first batch. It automatically uses all CUDA devices visible to
 the process; set `CUDA_VISIBLE_DEVICES` to restrict that set.
 Use `--gpus N` to use only N of the visible devices.
 
-MPI support is optional. Build with the `mpi` feature and launch with the
-MPI/Slurm environment appropriate for the cluster; each rank uses its local
-GPUs and rank 0 reports aggregate throughput.
+MPI support is optional. Build with the `cuda,mpi` features and launch with the
+MPI environment appropriate for the cluster; each rank uses its local GPUs and
+rank 0 reports aggregate throughput.
 
 CPU and CUDA searches run until a match is found or interrupted with `Ctrl-C`.
 Use limits for bounded runs:
 
 ```bash
 # CPU: at most 10M candidates.
-cargo run --release --bin wireguard-vanity-address -- dave --trials 10000000
+cargo run --release --bin wg-vanity -- dave --trials 10000000
 
 # CUDA: at most 60 seconds. Duration is checked between batches.
 CUDA_HOME=/usr/local/cuda-13.3 \
-  ./target/release/wireguard-vanity-address-cuda dave \
+  ./target/release/wg-vanity-cuda dave \
   --duration 60 --batch 1048576
 
 # The first reached limit wins.
 CUDA_HOME=/usr/local/cuda-13.3 \
-  ./target/release/wireguard-vanity-address-cuda dave \
+  ./target/release/wg-vanity-cuda dave \
   --trials 10000000 --duration 60 --batches 100
 ```
 
@@ -72,17 +72,17 @@ loads it with `cudarc`. The default target is `compute_120` and can be changed:
 
 ```bash
 CUDA_HOME=/usr/local/cuda-13.3 CUDA_ARCH=compute_120 \
-  cargo build --release --features cuda --bin wireguard-vanity-address-cuda
+  cargo build --release --features cuda --bin wg-vanity-cuda
 ```
 
 Throughput-only benchmark:
 
 ```bash
 CUDA_HOME=/usr/local/cuda-13.3 \
-  ./target/release/wireguard-vanity-benchmark --backend cpu --trials 8000000
+  ./target/release/wg-vanity-benchmark --backend cpu --trials 8000000
 
 CUDA_HOME=/usr/local/cuda-13.3 \
-  ./target/release/wireguard-vanity-benchmark --backend cuda \
+  ./target/release/wg-vanity-benchmark --backend cuda \
   --trials 8000000 --batch 8000000
 ```
 

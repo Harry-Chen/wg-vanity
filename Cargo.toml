@@ -1,23 +1,23 @@
 [package]
-name = "wireguard-vanity-address"
+name = "wg-vanity"
 version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
-authors = ["Brian Warner <warner@lothar.com>"]
-description = "Find Wireguard VPN keypairs with a specific readable string"
+authors = [
+    "Shengqi Chen <harry-chen@outlook.com>",
+    "Brian Warner <warner@lothar.com>",
+]
+description = "Find WireGuard keypairs with a specific readable string"
 license = "MIT"
 readme = "README.md"
 categories = ["cryptography"]
-documentation = "https://docs.rs/wireguard-vanity-address"
-homepage = "https://github.com/warner/wireguard-vanity-address"
-repository = "https://github.com/warner/wireguard-vanity-address"
+documentation = "https://docs.rs/wg-vanity"
+homepage = "https://github.com/Harry-Chen/wg-vanity"
+repository = "https://github.com/Harry-Chen/wg-vanity"
 exclude = [
     "**/.gitignore",
     ".gitignore",
 ]
-
-[badges]
-travis-ci = { repository = "warner/wireguard-vanity-address" }
 
 [dependencies]
 base64 = "0.22"
@@ -34,23 +34,23 @@ criterion = "0.8"
 [features]
 default = []
 cuda = ["dep:cudarc"]
-mpi = ["dep:mpi", "cuda"]
+mpi = ["dep:mpi"]
 
 [lib]
-name = "wireguard_vanity_lib"
+name = "wg_vanity"
 path = "src/lib.rs"
 
 [[bin]]
-name = "wireguard-vanity-address"
+name = "wg-vanity"
 path = "src/bin.rs"
 
 [[bin]]
-name = "wireguard-vanity-address-cuda"
+name = "wg-vanity-cuda"
 path = "src/bin/cuda.rs"
 required-features = ["cuda"]
 
 [[bin]]
-name = "wireguard-vanity-benchmark"
+name = "wg-vanity-benchmark"
 path = "src/bin/benchmark.rs"
 
 [[bench]]
