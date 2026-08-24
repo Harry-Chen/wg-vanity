@@ -1,4 +1,4 @@
-# CUDA Backend and Rust CUDA Evaluation
+# CUDA Backend
 
 ## Implementation
 
@@ -113,22 +113,6 @@ Long-running searches should use `--duration`, `--trials`, or `--batches`.
 The `--batch` value controls both throughput and the granularity at which a
 duration limit is observed. Reusing device buffers avoids repeated allocation
 and free operations between batches.
-
-## Rust-native CUDA evaluation
-
-NVIDIA's `cuda-oxide` was tested in a temporary checkout with current nightly,
-Clang 19, and LLVM tools. `cargo-oxide doctor` passed for CUDA 13.3, the RTX
-5090, libNVVM, nvJitLink, LLVM, and Clang.
-
-The repository's pinned `nightly-2026-04-03` is not available from the current
-rustup mirror. With nightly 1.100.0, the `rustc-codegen-cuda` backend failed on
-26 `rustc_public` API compatibility errors, including
-`CrateDefType::ty_with_args` and newer MIR `Rvalue::Use` fields. The production
-kernel was not migrated to an unbuildable oxide backend.
-
-The production boundary is Rust host code plus an auditable CUDA kernel. A
-future oxide port should first implement an independent X25519 correctness
-kernel and cross-check it against RFC 7748 and `x25519-dalek`.
 
 ## Key security notes
 
