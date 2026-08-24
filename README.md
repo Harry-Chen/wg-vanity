@@ -90,6 +90,15 @@ A four-character string like `dave` means only one out of every (roughly)
 to one out of 5.6 million. Longer strings will yield fewer candidate keypairs
 for a given amount of runtime.
 
+## CUDA acceleration
+
+The optional `cuda` feature adds an RTX 5090/Blackwell backend. Rust owns the
+CUDA host/runtime path while a dedicated CUDA kernel performs ChaCha20 candidate
+generation, X25519, Base64 encoding, and matching on the device. See the
+[CUDA design and benchmark notes](docs/CUDA.md) for build commands, security
+details, runtime limits (`--trials`, `--duration`, `--batch`), and the Rust-native
+CUDA evaluation.
+
 You can run this on multiple machines, but of course you then risk revealing
 your private VPN key to any of those machines. There is no support for
 managing clusters or anything like that: just install the tool on each worker
