@@ -7,6 +7,7 @@ use x25519_dalek::StaticSecret;
 const PTX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/vanity_x25519.ptx"));
 const BLOCK_SIZE: u32 = 256;
 
+/// A reusable CUDA context and set of device buffers for vanity-key batches.
 pub struct GpuSearcher {
     _context: Arc<CudaContext>,
     stream: Arc<cudarc::driver::CudaStream>,
@@ -19,20 +20,26 @@ pub struct GpuSearcher {
 }
 
 #[derive(Debug)]
+/// The outcome of one GPU kernel launch.
 pub struct BatchResult {
+    /// Number of candidates assigned to the launch.
     pub attempts: u64,
+    /// First matching `(private_key, public_key)` pair, Base64 encoded.
     pub candidate: Option<(String, String)>,
 }
 
 impl GpuSearcher {
+    /// Creates a searcher on CUDA device 0.
     pub fn new() -> Result<Self, DriverError> {
         Self::new_on_device(0)
     }
 
+    /// Returns the number of CUDA devices visible to the process.
     pub fn device_count() -> Result<usize, DriverError> {
         Ok(CudaContext::device_count()?.max(0) as usize)
     }
 
+    /// Creates a searcher on the visible CUDA device at `device`.
     pub fn new_on_device(device: usize) -> Result<Self, DriverError> {
         let context = CudaContext::new(device)?;
         let stream = context.default_stream();
@@ -56,6 +63,12 @@ impl GpuSearcher {
         })
     }
 
+    /// Searches one GPU batch for a case-insensitive prefix match.
+    ///
+    /// The match may begin at any offset whose complete prefix lies within
+    /// `start..end`. `base_counter` identifies this batch within a larger
+    /// search. Invalid ranges, empty prefixes, and unsupported batch sizes
+    /// return an empty result with zero attempts.
     pub fn search_batch(
         &mut self,
         prefix: &str,
