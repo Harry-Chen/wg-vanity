@@ -1,7 +1,8 @@
 [package]
 name = "wireguard-vanity-address"
-version = "0.4.1-alpha.0"
-edition = "2018"
+version = "0.5.0"
+edition = "2024"
+rust-version = "1.88"
 authors = ["Brian Warner <warner@lothar.com>"]
 description = "Find Wireguard VPN keypairs with a specific readable string"
 license = "MIT"
@@ -19,15 +20,19 @@ exclude = [
 travis-ci = { repository = "warner/wireguard-vanity-address" }
 
 [dependencies]
-clap = "~2.33.0"
-rayon = "1.0"
-base64 = "0.12"
-rand_core = { version = "0.5", default-features = false, features = ["getrandom"] }
-x25519-dalek = "0.6"
-num_cpus = "1.0"
+base64 = "0.22"
+clap = { version = "4.6", features = ["derive"] }
+num_cpus = "1.17"
+rayon = "1.12"
+x25519-dalek = { version = "3.0", features = ["getrandom", "static_secrets"] }
+cudarc = { version = "0.19.9", optional = true, default-features = false, features = ["driver", "nvrtc", "cuda-13030", "fallback-dynamic-loading"] }
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = "0.8"
+
+[features]
+default = []
+cuda = ["dep:cudarc"]
 
 [lib]
 name = "wireguard_vanity_lib"
@@ -36,6 +41,15 @@ path = "src/lib.rs"
 [[bin]]
 name = "wireguard-vanity-address"
 path = "src/bin.rs"
+
+[[bin]]
+name = "wireguard-vanity-address-cuda"
+path = "src/bin/cuda.rs"
+required-features = ["cuda"]
+
+[[bin]]
+name = "wireguard-vanity-benchmark"
+path = "src/bin/benchmark.rs"
 
 [[bench]]
 name = "keygen"

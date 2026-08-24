@@ -1,9 +1,9 @@
 use std::error::Error;
 use std::fmt;
 use std::io::{self, Write};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
-use clap::{App, AppSettings, Arg};
+use clap::Parser;
 use num_cpus;
 use rayon::prelude::*;
 use wireguard_vanity_lib::trial;
@@ -80,38 +80,45 @@ impl fmt::Display for ParseError {
     }
 }
 
+#[derive(Debug, Parser)]
+#[command(
+    author,
+    version,
+    about = "Finds WireGuard keypairs with a given string prefix"
+)]
+struct Args {
+    /// NAME must be found within the first RANGE chars of the public key.
+    #[arg(long = "in")]
+    range: Option<usize>,
+
+    /// Stop after this many candidate keys. Combined with --duration, the first limit wins.
+    #[arg(long, value_name = "COUNT")]
+    trials: Option<u64>,
+
+    /// Stop after this many seconds. Combined with --trials, the first limit wins.
+    #[arg(long, value_name = "SECONDS")]
+    duration: Option<f64>,
+
+    /// String to find near the start of the public key.
+    name: String,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    let matches = App::new("wireguard-vanity-address")
-        .setting(AppSettings::ArgRequiredElseHelp)
-        .version("0.3.1")
-        .author("Brian Warner <warner@lothar.com>")
-        .about("finds Wireguard keypairs with a given string prefix")
-        .arg(
-            Arg::with_name("RANGE")
-                .long("in")
-                .takes_value(true)
-                .help("NAME must be found within first RANGE chars of pubkey (default: 10)"),
-        )
-        .arg(
-            Arg::with_name("NAME")
-                .required(true)
-                .help("string to find near the start of the pubkey"),
-        )
-        .get_matches();
-    let prefix = matches.value_of("NAME").unwrap().to_ascii_lowercase();
+    let args = Args::parse();
+    let prefix = args.name.to_ascii_lowercase();
     let len = prefix.len();
-    let end: usize = 44.min(match matches.value_of("RANGE") {
-        Some(range) => range.parse()?,
-        None => {
-            if len <= 10 {
-                10
-            } else {
-                len + 10
-            }
-        }
-    });
+    let end: usize = 44.min(
+        args.range
+            .unwrap_or_else(|| if len <= 10 { 10 } else { len + 10 }),
+    );
     if end < len {
         return Err(ParseError(format!("range {} is too short for len={}", end, len)).into());
+    }
+    if args
+        .duration
+        .is_some_and(|seconds| !seconds.is_finite() || seconds <= 0.0)
+    {
+        return Err(ParseError("--duration must be a finite positive number".into()).into());
     }
 
     let offsets: u64 = 44.min((1 + end - len) as u64);
@@ -157,13 +164,31 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
     }
 
-    println!("hit Ctrl-C to stop");
+    let started = Instant::now();
+    let deadline = args
+        .duration
+        .map(|seconds| started + Duration::from_secs_f64(seconds));
+    let max_trials = args.trials.unwrap_or(u64::MAX);
+    println!("searching until a match, a limit, or Ctrl-C");
 
-    // 1M trials takes about 10s on my laptop, so let it run for 1000s
-    (0..100_000_000)
-        .into_par_iter()
-        .map(|_| trial(&prefix, 0, end))
-        .filter_map(|r| r)
-        .try_for_each(print)?;
+    const CPU_BATCH: u64 = 100_000;
+    let mut attempted = 0u64;
+    while attempted < max_trials && deadline.is_none_or(|limit| Instant::now() < limit) {
+        let count = CPU_BATCH.min(max_trials - attempted);
+        let matches: Vec<_> = (0..count)
+            .into_par_iter()
+            .map(|_| trial(&prefix, 0, end))
+            .filter_map(|result| result)
+            .collect();
+        for result in matches {
+            print(result)?;
+        }
+        attempted += count;
+    }
+    println!(
+        "stopped after {} candidates in {:.3}s",
+        attempted,
+        started.elapsed().as_secs_f64()
+    );
     Ok(())
 }
