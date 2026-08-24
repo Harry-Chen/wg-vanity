@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - run: cargo fmt --all --check
@@ -25,12 +25,22 @@ jobs:
       - run: cargo bench --locked --no-run
       - run: cargo run --locked --bin wg-vanity -- zzzzzzzzzzzzzzzz --trials 1000
 
+  msrv:
+    name: Rust 1.88
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - run: cargo check --locked --all-targets
+
   mpi:
     name: CPU + MPI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: mpi4py/setup-mpi@v1
         with:
           mpi: openmpi
