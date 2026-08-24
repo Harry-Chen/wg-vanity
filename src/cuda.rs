@@ -1,5 +1,5 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use cudarc::driver::{CudaContext, DriverError, LaunchConfig, PushKernelArg};
+use cudarc::driver::{CudaContext, CudaSlice, DriverError, LaunchConfig, PushKernelArg};
 use cudarc::nvrtc::Ptx;
 use std::sync::Arc;
 use x25519_dalek::StaticSecret;
@@ -11,6 +11,12 @@ pub struct GpuSearcher {
     _context: Arc<CudaContext>,
     stream: Arc<cudarc::driver::CudaStream>,
     function: cudarc::driver::CudaFunction,
+    d_seed: CudaSlice<u8>,
+    d_prefix: CudaSlice<u8>,
+    d_attempts: CudaSlice<u64>,
+    d_found: CudaSlice<i32>,
+    d_private: CudaSlice<u8>,
+    d_public: CudaSlice<u8>,
 }
 
 #[derive(Debug)]
@@ -26,15 +32,27 @@ impl GpuSearcher {
         let ptx = Ptx::from_src(std::str::from_utf8(PTX).expect("nvcc emitted non-UTF-8 PTX"));
         let module = context.load_module(ptx)?;
         let function = module.load_function("vanity_kernel")?;
+        let d_seed = stream.clone_htod(&[0u8; 32])?;
+        let d_prefix = stream.clone_htod(&[0u8; 44])?;
+        let d_attempts = stream.clone_htod(&[0u64])?;
+        let d_found = stream.clone_htod(&[-1i32])?;
+        let d_private = stream.clone_htod(&[0u8; 32])?;
+        let d_public = stream.clone_htod(&[0u8; 32])?;
         Ok(Self {
             _context: context,
             stream,
             function,
+            d_seed,
+            d_prefix,
+            d_attempts,
+            d_found,
+            d_private,
+            d_public,
         })
     }
 
     pub fn search_batch(
-        &self,
+        &mut self,
         prefix: &str,
         start: usize,
         end: usize,
@@ -58,12 +76,12 @@ impl GpuSearcher {
         }
 
         let seed = StaticSecret::random().to_bytes();
-        let d_seed = self.stream.clone_htod(&seed)?;
-        let d_prefix = self.stream.clone_htod(prefix_bytes)?;
-        let mut d_attempts = self.stream.clone_htod(&[0u64])?;
-        let mut d_found = self.stream.clone_htod(&[-1i32])?;
-        let mut d_private = self.stream.clone_htod(&[0u8; 32])?;
-        let mut d_public = self.stream.clone_htod(&[0u8; 32])?;
+        let mut prefix_host = [0u8; 44];
+        prefix_host[..prefix_bytes.len()].copy_from_slice(prefix_bytes);
+        self.stream.memcpy_htod(&seed, &mut self.d_seed)?;
+        self.stream.memcpy_htod(&prefix_host, &mut self.d_prefix)?;
+        self.stream.memcpy_htod(&[0u64], &mut self.d_attempts)?;
+        self.stream.memcpy_htod(&[-1i32], &mut self.d_found)?;
 
         let cfg = LaunchConfig {
             grid_dim: (blocks as u32, 1, 1),
@@ -74,25 +92,25 @@ impl GpuSearcher {
         let start = start as u32;
         let end = end as u32;
         let mut args = self.stream.launch_builder(&self.function);
-        args.arg(&d_seed)
+        args.arg(&self.d_seed)
             .arg(&base_counter)
             .arg(&batch)
-            .arg(&d_prefix)
+            .arg(&self.d_prefix)
             .arg(&prefix_len)
             .arg(&start)
             .arg(&end)
-            .arg(&mut d_attempts)
-            .arg(&mut d_found)
-            .arg(&mut d_private)
-            .arg(&mut d_public);
+            .arg(&mut self.d_attempts)
+            .arg(&mut self.d_found)
+            .arg(&mut self.d_private)
+            .arg(&mut self.d_public);
         unsafe { args.launch(cfg)? };
         self.stream.synchronize()?;
 
-        let attempts = self.stream.clone_dtoh(&d_attempts)?[0];
-        let found = self.stream.clone_dtoh(&d_found)?[0];
+        let attempts = self.stream.clone_dtoh(&self.d_attempts)?[0];
+        let found = self.stream.clone_dtoh(&self.d_found)?[0];
         let candidate = if found >= 0 {
-            let private = self.stream.clone_dtoh(&d_private)?;
-            let public = self.stream.clone_dtoh(&d_public)?;
+            let private = self.stream.clone_dtoh(&self.d_private)?;
+            let public = self.stream.clone_dtoh(&self.d_public)?;
             Some((STANDARD.encode(private), STANDARD.encode(public)))
         } else {
             None
@@ -111,7 +129,7 @@ mod tests {
 
     #[test]
     fn gpu_candidate_matches_dalek() {
-        let gpu = GpuSearcher::new().expect("CUDA device is required");
+        let mut gpu = GpuSearcher::new().expect("CUDA device is required");
         let result = gpu
             .search_batch("a", 0, 10, 1024, 0)
             .expect("CUDA kernel launch");

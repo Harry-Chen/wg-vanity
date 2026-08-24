@@ -52,7 +52,7 @@ fn benchmark_cpu(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
 fn benchmark_cuda(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     use wireguard_vanity_lib::cuda::GpuSearcher;
     let end = 44.min(args.prefix.len().max(10));
-    let gpu = GpuSearcher::new().map_err(|e| format!("CUDA initialization failed: {e:?}"))?;
+    let mut gpu = GpuSearcher::new().map_err(|e| format!("CUDA initialization failed: {e:?}"))?;
     let start = Instant::now();
     let mut done = 0u64;
     let mut counter = 0u64;

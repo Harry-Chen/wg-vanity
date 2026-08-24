@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("--batch must be greater than zero".into());
     }
 
-    let gpu = GpuSearcher::new().map_err(|e| format!("CUDA initialization failed: {e:?}"))?;
+    let mut gpu = GpuSearcher::new().map_err(|e| format!("CUDA initialization failed: {e:?}"))?;
     let mut counter = 0u64;
     let mut total = 0u64;
     let started = Instant::now();
