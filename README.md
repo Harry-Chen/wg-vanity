@@ -125,6 +125,10 @@ Run the Criterion CPU microbenchmarks with:
 cargo bench
 ```
 
+The Criterion suite includes same-pattern literal, glob, and equivalent
+precompiled-regex matcher comparisons. Regex compilation is not included in
+per-candidate timing.
+
 For bounded end-to-end throughput measurements, use `wg-vanity-benchmark` and
 select the `cpu` or `cuda` backend.
 

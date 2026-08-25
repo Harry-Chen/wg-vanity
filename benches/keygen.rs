@@ -5,7 +5,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use rayon::prelude::*;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use wg_vanity::trial;
+use wg_vanity::{PatternKind, SearchPattern, trial};
 
 fn candidate_stages(c: &mut Criterion) {
     let mut group = c.benchmark_group("candidate");
@@ -26,6 +26,22 @@ fn candidate_stages(c: &mut Criterion) {
                 .to_ascii_lowercase()
                 .contains("****")
         })
+    });
+    let literal = SearchPattern::new("zzzzzzzzzz", PatternKind::Literal, false).unwrap();
+    let regex = SearchPattern::new("zzzzzzzzzz", PatternKind::Regex, false).unwrap();
+    let glob = SearchPattern::new("zz*zzzzzz", PatternKind::Glob, false).unwrap();
+    let glob_regex = SearchPattern::new("zz.*zzzzzz", PatternKind::Regex, false).unwrap();
+    group.bench_function("literal_match_same_pattern", |b| {
+        b.iter(|| literal.is_match(black_box(public_b64.as_bytes()), 0, 10))
+    });
+    group.bench_function("regex_match_same_pattern", |b| {
+        b.iter(|| regex.is_match(black_box(public_b64.as_bytes()), 0, 10))
+    });
+    group.bench_function("glob_match_same_pattern", |b| {
+        b.iter(|| glob.is_match(black_box(public_b64.as_bytes()), 0, 10))
+    });
+    group.bench_function("glob_regex_match_same_pattern", |b| {
+        b.iter(|| glob_regex.is_match(black_box(public_b64.as_bytes()), 0, 10))
     });
     group.bench_function("complete_no_match", |b| {
         b.iter(|| trial(black_box("****"), 0, 10))
