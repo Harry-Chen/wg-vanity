@@ -70,7 +70,9 @@ the corresponding search controls.
 A CUDA toolkit is required at build time. When `CUDA_ARCH` is unset, the build
 uses the lowest compute capability reported by visible GPUs, or `compute_80`
 when no GPU is available. Set `CUDA_ARCH` explicitly for cross-compilation or
-to choose a different PTX target. See [docs/CUDA.md](docs/CUDA.md) for details.
+to choose a different PTX target. The build emits PTX rather than a
+GPU-specific cubin; the CUDA driver JIT-compiles that PTX for the running GPU.
+See [docs/CUDA.md](docs/CUDA.md) for details.
 
 ## MPI
 
