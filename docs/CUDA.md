@@ -42,10 +42,18 @@ The CUDA binary reports an estimated candidate count and expected time after
 it measures the first batch. It automatically uses all CUDA devices visible to
 the process; set `CUDA_VISIBLE_DEVICES` to restrict that set.
 Use `--gpus N` to use only N of the visible devices.
-Literal patterns and globs (`--glob`, with `*` and `?`) run on the GPU. Add
-`--case-sensitive` to preserve ASCII letter case. The CPU-only `--regex` mode
-is rejected by this binary; glob and regex searches do not print a probability
-estimate because their match rate depends on the pattern.
+Literal patterns, globs (`--glob`, with `*` and `?`), and bounded Rust regexes
+run on the GPU. Add `--case-sensitive` to preserve ASCII letter case. Regexes
+are compiled on the host to a compact DFA over the Base64 alphabet and that
+table is uploaded once per GPU. Expressions whose DFA exceeds the configured
+limits are rejected with a CPU fallback suggestion; glob and regex searches do
+not print a probability estimate because their match rate depends on the
+pattern.
+
+Regex matching is performed against `public_key[start..end]`, so anchors and
+word boundaries are relative to that slice. Captures are not returned. The
+kernel streams Base64 sextets directly from the public key and executes the
+EOI transition at the end of the selected range.
 
 MPI support is optional. Build with the `cuda,mpi` features and launch with the
 MPI environment appropriate for the cluster; each rank uses its local GPUs and

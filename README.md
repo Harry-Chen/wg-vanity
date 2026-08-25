@@ -50,7 +50,7 @@ wg-vanity dave --in 16
 # Glob matching supports `*` and `?` (case-insensitive by default).
 wg-vanity --glob 'd?ve*'
 
-# Regular expressions are CPU-only; case-sensitive matching is also available.
+# Rust regex matching; case-sensitive matching is available.
 wg-vanity --regex 'dave[0-9]+' --case-sensitive
 ```
 
@@ -71,9 +71,16 @@ The CUDA binary uses all visible GPUs by default. Use `--gpus N` to select a
 smaller number, or restrict visibility with `CUDA_VISIBLE_DEVICES`. It reports
 the estimated search space and, after measuring the hardware, the expected
 time to find a match. `--trials`, `--duration`, `--batch`, and `--in` provide
-the corresponding search controls. CUDA supports literal matching and glob
-patterns with `*` and `?`; `--case-sensitive` applies to both. The general
-regex mode is CPU-only and is rejected by `wg-vanity-cuda`.
+the corresponding search controls. CUDA supports literal matching, glob
+patterns with `*` and `?`, and bounded Rust regexes; `--case-sensitive` applies
+to all three. Regexes are compiled to a compact Base64 DFA and very large
+expressions are rejected before GPU allocation.
+
+```bash
+./target/release/wg-vanity-cuda \
+  --regex '^(wg|vpn)[0-9A-Za-z]{2}' \
+  --case-sensitive
+```
 
 A CUDA toolkit is required at build time. When `CUDA_ARCH` is unset, the build
 uses the lowest compute capability reported by visible GPUs, or `compute_80`

@@ -28,13 +28,14 @@ regex = "1.11"
 x25519-dalek = { version = "3.0", features = ["getrandom", "static_secrets"] }
 cudarc = { version = "0.19.9", optional = true, default-features = false, features = ["driver", "nvrtc", "cuda-13030", "fallback-dynamic-loading"] }
 mpi = { version = "0.8", optional = true }
+regex-automata = { version = "0.4.18", optional = true }
 
 [dev-dependencies]
 criterion = "0.8"
 
 [features]
 default = []
-cuda = ["dep:cudarc"]
+cuda = ["dep:cudarc", "dep:regex-automata"]
 mpi = ["dep:mpi"]
 
 [lib]

@@ -1004,6 +1004,7 @@ dependencies = [
  "num_cpus",
  "rayon",
  "regex",
+ "regex-automata",
  "x25519-dalek",
 ]
 

@@ -446,3 +446,75 @@ extern "C" __global__ void vanity_kernel(const uint8_t *seed, u64 base_counter, 
     }
   }
 }
+
+__device__ __forceinline__ uint32_t base64_sextet_at(const uint8_t in[32], uint32_t position) {
+  const uint32_t group = position >> 2;
+  const uint32_t lane = position & 3;
+  const uint32_t index = group * 3;
+  switch (lane) {
+    case 0:
+      return in[index] >> 2;
+    case 1:
+      return ((in[index] & 3u) << 4) | (in[index + 1] >> 4);
+    case 2:
+      return ((in[index + 1] & 15u) << 2) |
+             (index + 2 < 32 ? (in[index + 2] >> 6) : 0u);
+    default:
+      return in[index + 2] & 63u;
+  }
+}
+
+__device__ __forceinline__ bool regex_match_base64(
+    const uint8_t public_key[32], uint32_t start, uint32_t end,
+    const uint32_t *__restrict__ transitions, const uint32_t *__restrict__ equals,
+    const uint8_t *__restrict__ eoi_match) {
+  constexpr uint32_t kDfaMatch = 1u << 31;
+  constexpr uint32_t kDfaDead = 1u << 30;
+  constexpr uint32_t kDfaStateMask = (1u << 30) - 1;
+  uint32_t state = 0;
+  for (uint32_t position = start; position < end; ++position) {
+    const uint32_t edge = position == 43
+        ? equals[state]
+        : transitions[(state << 6) | base64_sextet_at(public_key, position)];
+    if (edge & kDfaMatch) return true;
+    if (edge & kDfaDead) return false;
+    state = edge & kDfaStateMask;
+  }
+  return eoi_match[state] != 0;
+}
+
+extern "C" __global__ void vanity_regex_kernel(
+    const uint8_t *seed, u64 base_counter, u64 count,
+    const uint32_t *__restrict__ transitions, const uint32_t *__restrict__ equals,
+    const uint8_t *__restrict__ eoi_match, uint32_t start, uint32_t end, int *found,
+    uint8_t *private_out, uint8_t *public_out) {
+  const u64 tid = (u64)blockIdx.x * blockDim.x + threadIdx.x;
+  const bool active = tid < count && *found < 0;
+  if (!active) return;
+
+  uint8_t private_key[32], public_key[32], stream[64];
+  chacha20_block(stream, seed, base_counter + tid);
+  for (int i = 0; i < 32; ++i) private_key[i] = stream[i];
+  const uint8_t basepoint[32] = {9};
+  x25519(public_key, private_key, basepoint);
+
+  if (regex_match_base64(public_key, start, end, transitions, equals, eoi_match) &&
+      atomicCAS(found, -1, (int)tid) == -1) {
+    for (int i = 0; i < 32; ++i) {
+      private_out[i] = private_key[i];
+      public_out[i] = public_key[i];
+    }
+  }
+}
+
+extern "C" __global__ void regex_match_test_kernel(
+    const uint8_t *inputs, uint32_t stride, uint32_t count,
+    const uint32_t *__restrict__ transitions, const uint32_t *__restrict__ equals,
+    const uint8_t *__restrict__ eoi_match, uint32_t start, uint32_t end,
+    uint8_t *results) {
+  const uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index < count) {
+    results[index] = regex_match_base64(
+        inputs + (size_t)index * stride, start, end, transitions, equals, eoi_match);
+  }
+}

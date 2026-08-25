@@ -70,7 +70,7 @@ struct Args {
     #[arg(long, conflicts_with = "regex")]
     glob: bool,
 
-    /// Regular expressions are CPU-only and are rejected by this CUDA binary.
+    /// Interpret NAME as a Rust regular expression compiled to a bounded CUDA DFA.
     #[arg(long, conflicts_with = "glob")]
     regex: bool,
 
@@ -144,9 +144,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         PatternKind::Literal
     };
     let pattern = SearchPattern::new(&args.name, kind, args.case_sensitive)?;
-    let gpu_pattern = pattern
-        .gpu_pattern()
-        .ok_or("CUDA supports literal and glob patterns; use wg-vanity for regex")?;
+    let gpu_pattern = pattern.gpu_pattern().map_err(|error| {
+        format!(
+            "failed to compile regex for CUDA: {error}; use the CPU binary or simplify the expression"
+        )
+    })?;
     let len = pattern.len();
     let end = 44.min(args.range.unwrap_or_else(|| {
         if kind == PatternKind::Literal && len > 10 {
@@ -155,7 +157,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             10
         }
     }));
-    if len == 0 || end == 0 || (kind == PatternKind::Literal && len > end) {
+    if end == 0
+        || ((kind == PatternKind::Literal || kind == PatternKind::Glob) && len == 0)
+        || (kind == PatternKind::Literal && len > end)
+    {
         return Err(format!("search range is invalid for this pattern (0..{end})").into());
     }
     if args
@@ -182,7 +187,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             );
         } else {
-            println!("search-space estimate unavailable for glob patterns");
+            println!("search-space estimate unavailable for glob/regex patterns");
         }
     }
 
@@ -251,7 +256,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let trials = args.trials;
         let batch = args.batch;
         handles.push(thread::spawn(move || {
-            let gpu = match GpuSearcher::new_on_device(device) {
+            let gpu = match GpuSearcher::new_on_device_with_pattern(device, &gpu_pattern) {
                 Ok(gpu) => Some(gpu),
                 Err(error) => {
                     stop.store(true, Ordering::Relaxed);
@@ -282,7 +287,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if count == 0 {
                     break;
                 }
-                match gpu.search_batch_with_pattern(&gpu_pattern, 0, end, count, base_counter) {
+                match gpu.search_batch_prepared(0, end, count, base_counter) {
                     Ok(result) => {
                         if result.candidate.is_some() {
                             stop.store(true, Ordering::Relaxed);

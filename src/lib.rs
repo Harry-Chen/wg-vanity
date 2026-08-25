@@ -25,20 +25,33 @@ pub enum PatternKind {
 #[derive(Clone, Debug)]
 pub struct SearchPattern {
     kind: PatternKind,
+    #[cfg(feature = "cuda")]
+    source: String,
     bytes: Vec<u8>,
     regex: Option<Regex>,
     case_sensitive: bool,
 }
 
-/// The fixed-width pattern representation accepted by the CUDA matcher.
+#[cfg(feature = "cuda")]
+/// A pattern prepared for the CUDA matcher.
 #[derive(Clone, Debug)]
-pub struct GpuPattern {
-    /// `0` for literal matching, `1` for glob matching.
-    pub mode: u32,
-    /// Pattern bytes, normalized when case-insensitive matching is enabled.
-    pub bytes: Vec<u8>,
-    /// Whether ASCII letter case must be preserved.
-    pub case_sensitive: bool,
+pub enum GpuPattern {
+    /// Literal matching data.
+    Literal {
+        /// Pattern bytes, normalized when case-insensitive matching is enabled.
+        bytes: Vec<u8>,
+        /// Whether ASCII letter case must be preserved.
+        case_sensitive: bool,
+    },
+    /// Basic glob matching data.
+    Glob {
+        /// Pattern bytes, normalized when case-insensitive matching is enabled.
+        bytes: Vec<u8>,
+        /// Whether ASCII letter case must be preserved.
+        case_sensitive: bool,
+    },
+    /// A compact regex DFA shared by GPU workers.
+    Regex(std::sync::Arc<crate::regex_dfa::GpuRegexDfa>),
 }
 
 impl SearchPattern {
@@ -61,6 +74,8 @@ impl SearchPattern {
         };
         Ok(Self {
             kind,
+            #[cfg(feature = "cuda")]
+            source: text.to_string(),
             bytes,
             regex,
             case_sensitive,
@@ -82,20 +97,21 @@ impl SearchPattern {
         self.bytes.is_empty()
     }
 
-    /// Returns whether this pattern can be evaluated by the CUDA matcher.
-    pub fn gpu_pattern(&self) -> Option<GpuPattern> {
+    /// Compiles this pattern into the representation used by the CUDA matcher.
+    #[cfg(feature = "cuda")]
+    pub fn gpu_pattern(&self) -> Result<GpuPattern, crate::regex_dfa::GpuRegexError> {
         match self.kind {
-            PatternKind::Literal => Some(GpuPattern {
-                mode: 0,
+            PatternKind::Literal => Ok(GpuPattern::Literal {
                 bytes: self.bytes.clone(),
                 case_sensitive: self.case_sensitive,
             }),
-            PatternKind::Glob => Some(GpuPattern {
-                mode: 1,
+            PatternKind::Glob => Ok(GpuPattern::Glob {
                 bytes: self.bytes.clone(),
                 case_sensitive: self.case_sensitive,
             }),
-            PatternKind::Regex => None,
+            PatternKind::Regex => Ok(GpuPattern::Regex(std::sync::Arc::new(
+                crate::regex_dfa::GpuRegexDfa::compile(&self.source, self.case_sensitive)?,
+            ))),
         }
     }
 
@@ -176,6 +192,12 @@ fn glob_matches_at(text: &[u8], pattern: &[u8]) -> bool {
 }
 
 #[cfg(feature = "cuda")]
+/// Host-side CUDA regex compilation and compact DFA simulation.
+pub mod regex_dfa;
+#[cfg(feature = "cuda")]
+pub use regex_dfa::{GpuRegexDfa, GpuRegexError};
+
+#[cfg(feature = "cuda")]
 /// CUDA batch search support.
 pub mod cuda;
 
@@ -237,6 +259,7 @@ mod tests {
     fn regex_uses_rust_regex_engine() {
         let pattern = SearchPattern::new("a[0-9]+z", PatternKind::Regex, true).unwrap();
         assert!(pattern.is_match(b"xxa123zyy", 0, 9));
-        assert!(pattern.gpu_pattern().is_none());
+        #[cfg(feature = "cuda")]
+        assert!(pattern.gpu_pattern().is_ok());
     }
 }
