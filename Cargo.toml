@@ -24,6 +24,7 @@ base64 = "0.22"
 clap = { version = "4.6", features = ["derive"] }
 num_cpus = "1.17"
 rayon = "1.12"
+regex = "1.11"
 x25519-dalek = { version = "3.0", features = ["getrandom", "static_secrets"] }
 cudarc = { version = "0.19.9", optional = true, default-features = false, features = ["driver", "nvrtc", "cuda-13030", "fallback-dynamic-loading"] }
 mpi = { version = "0.8", optional = true }

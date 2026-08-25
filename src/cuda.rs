@@ -1,3 +1,4 @@
+use crate::{GpuPattern, PatternKind, SearchPattern};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use cudarc::driver::{CudaContext, CudaSlice, DriverError, LaunchConfig, PushKernelArg};
 use cudarc::nvrtc::Ptx;
@@ -63,7 +64,7 @@ impl GpuSearcher {
         })
     }
 
-    /// Searches one GPU batch for a case-insensitive prefix match.
+    /// Searches one GPU batch for a case-insensitive literal match.
     ///
     /// The match may begin at any offset whose complete prefix lies within
     /// `start..end`. `base_counter` identifies this batch within a larger
@@ -77,14 +78,34 @@ impl GpuSearcher {
         batch: u64,
         base_counter: u64,
     ) -> Result<BatchResult, DriverError> {
-        if prefix.is_empty() || prefix.len() > 44 || end > 44 || start > end {
+        let pattern = SearchPattern::new(prefix, PatternKind::Literal, false)
+            .expect("literal patterns are always valid");
+        let gpu_pattern = pattern
+            .gpu_pattern()
+            .expect("literal patterns support CUDA");
+        self.search_batch_with_pattern(&gpu_pattern, start, end, batch, base_counter)
+    }
+
+    /// Searches one GPU batch with a literal or basic glob pattern.
+    pub fn search_batch_with_pattern(
+        &mut self,
+        pattern: &GpuPattern,
+        start: usize,
+        end: usize,
+        batch: u64,
+        base_counter: u64,
+    ) -> Result<BatchResult, DriverError> {
+        if pattern.bytes.is_empty()
+            || pattern.bytes.len() > 44
+            || end > 44
+            || start > end
+            || (pattern.mode > 1)
+        {
             return Ok(BatchResult {
                 attempts: 0,
                 candidate: None,
             });
         }
-        let prefix = prefix.to_ascii_lowercase();
-        let prefix_bytes = prefix.as_bytes();
         let blocks = batch.div_ceil(BLOCK_SIZE as u64);
         if batch == 0 || blocks > u32::MAX as u64 {
             return Ok(BatchResult {
@@ -95,7 +116,7 @@ impl GpuSearcher {
 
         let seed = StaticSecret::random().to_bytes();
         let mut prefix_host = [0u8; 44];
-        prefix_host[..prefix_bytes.len()].copy_from_slice(prefix_bytes);
+        prefix_host[..pattern.bytes.len()].copy_from_slice(&pattern.bytes);
         self.stream.memcpy_htod(&seed, &mut self.d_seed)?;
         self.stream.memcpy_htod(&prefix_host, &mut self.d_prefix)?;
         self.stream.memcpy_htod(&[-1i32], &mut self.d_found)?;
@@ -105,7 +126,9 @@ impl GpuSearcher {
             block_dim: (BLOCK_SIZE, 1, 1),
             shared_mem_bytes: 0,
         };
-        let prefix_len = prefix_bytes.len() as u32;
+        let prefix_len = pattern.bytes.len() as u32;
+        let pattern_mode = pattern.mode;
+        let case_sensitive = u32::from(pattern.case_sensitive);
         let start = start as u32;
         let end = end as u32;
         let mut args = self.stream.launch_builder(&self.function);
@@ -114,6 +137,8 @@ impl GpuSearcher {
             .arg(&batch)
             .arg(&self.d_prefix)
             .arg(&prefix_len)
+            .arg(&pattern_mode)
+            .arg(&case_sensitive)
             .arg(&start)
             .arg(&end)
             .arg(&mut self.d_found)

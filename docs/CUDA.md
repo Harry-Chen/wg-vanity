@@ -42,6 +42,10 @@ The CUDA binary reports an estimated candidate count and expected time after
 it measures the first batch. It automatically uses all CUDA devices visible to
 the process; set `CUDA_VISIBLE_DEVICES` to restrict that set.
 Use `--gpus N` to use only N of the visible devices.
+Literal patterns and globs (`--glob`, with `*` and `?`) run on the GPU. Add
+`--case-sensitive` to preserve ASCII letter case. The CPU-only `--regex` mode
+is rejected by this binary; glob and regex searches do not print a probability
+estimate because their match rate depends on the pattern.
 
 MPI support is optional. Build with the `cuda,mpi` features and launch with the
 MPI environment appropriate for the cluster; each rank uses its local GPUs and

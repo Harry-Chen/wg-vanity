@@ -365,14 +365,55 @@ __device__ void base64_32(uint8_t out[44], const uint8_t in[32]) {
   out[o] = '=';
 }
 
+__device__ bool glob_match_at(const uint8_t encoded[44], const uint8_t *pattern,
+                              uint32_t pattern_len, uint32_t text_start, uint32_t end,
+                              uint32_t case_sensitive) {
+  uint32_t text = text_start;
+  uint32_t pattern_index = 0;
+  uint32_t star_index = 0xffffffffu;
+  uint32_t star_text = text_start;
+  while (text < end) {
+    if (pattern_index == pattern_len) return true;
+    uint8_t got = encoded[text];
+    if (!case_sensitive && got >= 'A' && got <= 'Z') {
+      got = (uint8_t)(got + ('a' - 'A'));
+    }
+    if (pattern_index < pattern_len && pattern[pattern_index] != '*' &&
+        (pattern[pattern_index] == '?' || pattern[pattern_index] == got)) {
+      ++pattern_index;
+      ++text;
+    } else if (pattern_index < pattern_len && pattern[pattern_index] == '*') {
+      star_index = pattern_index++;
+      star_text = text;
+    } else if (star_index != 0xffffffffu) {
+      pattern_index = star_index + 1;
+      text = ++star_text;
+    } else {
+      return false;
+    }
+  }
+  while (pattern_index < pattern_len && pattern[pattern_index] == '*') ++pattern_index;
+  return pattern_index == pattern_len;
+}
+
 __device__ bool prefix_match(const uint8_t encoded[44], const uint8_t *prefix,
-                             uint32_t prefix_len, uint32_t start, uint32_t end) {
-  if (prefix_len == 0 || end > 44 || start > end || prefix_len > end - start) return false;
+                             uint32_t prefix_len, uint32_t mode,
+                             uint32_t case_sensitive, uint32_t start, uint32_t end) {
+  if (prefix_len == 0 || end > 44 || start > end ||
+      (mode == 0 && prefix_len > end - start)) return false;
+  if (mode == 1) {
+    for (uint32_t at = start; at <= end; ++at) {
+      if (glob_match_at(encoded, prefix, prefix_len, at, end, case_sensitive)) return true;
+    }
+    return false;
+  }
   for (uint32_t at = start; at + prefix_len <= end; ++at) {
     bool ok = true;
     for (uint32_t i = 0; i < prefix_len; ++i) {
       uint8_t got = encoded[at + i];
-      if (got >= 'A' && got <= 'Z') got = (uint8_t)(got + ('a' - 'A'));
+      if (!case_sensitive && got >= 'A' && got <= 'Z') {
+        got = (uint8_t)(got + ('a' - 'A'));
+      }
       if (got != prefix[i]) { ok = false; break; }
     }
     if (ok) return true;
@@ -382,6 +423,7 @@ __device__ bool prefix_match(const uint8_t encoded[44], const uint8_t *prefix,
 
 extern "C" __global__ void vanity_kernel(const uint8_t *seed, u64 base_counter, u64 count,
                                           const uint8_t *prefix, uint32_t prefix_len,
+                                          uint32_t pattern_mode, uint32_t case_sensitive,
                                           uint32_t start, uint32_t end,
                                           int *found,
                                           uint8_t *private_out, uint8_t *public_out) {
@@ -395,7 +437,7 @@ extern "C" __global__ void vanity_kernel(const uint8_t *seed, u64 base_counter, 
     const uint8_t basepoint[32] = {9};
     x25519(public_key, private_key, basepoint);
     base64_32(encoded, public_key);
-    if (prefix_match(encoded, prefix, prefix_len, start, end) &&
+    if (prefix_match(encoded, prefix, prefix_len, pattern_mode, case_sensitive, start, end) &&
         atomicCAS(found, -1, (int)tid) == -1) {
       for (int i = 0; i < 32; ++i) {
         private_out[i] = private_key[i];

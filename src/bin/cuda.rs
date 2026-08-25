@@ -7,17 +7,22 @@ use std::sync::{Arc, Barrier, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use wg_vanity::cuda::GpuSearcher;
+use wg_vanity::{PatternKind, SearchPattern};
 
 #[cfg(feature = "mpi")]
 use mpi::traits::*;
 
-fn expected_candidates(prefix: &str, end: usize) -> f64 {
+fn expected_candidates(prefix: &str, end: usize, case_sensitive: bool) -> f64 {
     let len = prefix.len();
     let offsets = end.saturating_sub(len).saturating_add(1);
     if len == 0 || offsets == 0 {
         return f64::INFINITY;
     }
-    let casefolded_letters = prefix.bytes().filter(|c| c.is_ascii_alphabetic()).count();
+    let casefolded_letters = if case_sensitive {
+        0
+    } else {
+        prefix.bytes().filter(|c| c.is_ascii_alphabetic()).count()
+    };
     let alphabet = 64_f64.powi(len as i32);
     alphabet / (offsets as f64 * 2_f64.powi(casefolded_letters as i32))
 }
@@ -54,12 +59,24 @@ fn format_duration(seconds: f64) -> String {
     about = "CUDA-accelerated WireGuard vanity key search"
 )]
 struct Args {
-    /// String to find near the start of the public key.
+    /// Literal, glob, or regular expression to find near the start of the public key.
     name: String,
 
     /// Search range in Base64 characters (defaults to 10, or len+10 for long names).
     #[arg(long = "in")]
     range: Option<usize>,
+
+    /// Interpret NAME as a glob (`*` and `?`) instead of a literal.
+    #[arg(long, conflicts_with = "regex")]
+    glob: bool,
+
+    /// Regular expressions are CPU-only and are rejected by this CUDA binary.
+    #[arg(long, conflicts_with = "glob")]
+    regex: bool,
+
+    /// Preserve ASCII letter case while matching.
+    #[arg(long)]
+    case_sensitive: bool,
 
     /// Number of candidates per kernel launch.
     #[arg(long, default_value_t = 1 << 20)]
@@ -119,16 +136,27 @@ fn main() -> Result<(), Box<dyn Error>> {
     let root = rank == 0;
 
     let args = Args::parse();
-    let prefix = args.name.to_ascii_lowercase();
+    let kind = if args.glob {
+        PatternKind::Glob
+    } else if args.regex {
+        PatternKind::Regex
+    } else {
+        PatternKind::Literal
+    };
+    let pattern = SearchPattern::new(&args.name, kind, args.case_sensitive)?;
+    let gpu_pattern = pattern
+        .gpu_pattern()
+        .ok_or("CUDA supports literal and glob patterns; use wg-vanity for regex")?;
+    let len = pattern.len();
     let end = 44.min(args.range.unwrap_or_else(|| {
-        if prefix.len() <= 10 {
-            10
+        if kind == PatternKind::Literal && len > 10 {
+            len + 10
         } else {
-            prefix.len() + 10
+            10
         }
     }));
-    if prefix.is_empty() || prefix.len() > end {
-        return Err(format!("prefix must fit in the selected range (0..{end})").into());
+    if len == 0 || end == 0 || (kind == PatternKind::Literal && len > end) {
+        return Err(format!("search range is invalid for this pattern (0..{end})").into());
     }
     if args
         .duration
@@ -140,12 +168,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("--batch must be greater than zero".into());
     }
 
-    let expected = expected_candidates(&prefix, end);
+    let expected = (kind == PatternKind::Literal)
+        .then(|| expected_candidates(&args.name, end, args.case_sensitive));
     if root {
-        println!(
-            "expected work: about {} candidates (case-insensitive estimate) to find one match",
-            format_count(expected)
-        );
+        if let Some(expected) = expected {
+            println!(
+                "expected work: about {} candidates ({} estimate) to find one match",
+                format_count(expected),
+                if args.case_sensitive {
+                    "case-sensitive"
+                } else {
+                    "case-insensitive"
+                }
+            );
+        } else {
+            println!("search-space estimate unavailable for glob patterns");
+        }
     }
 
     let visible_gpus = GpuSearcher::device_count()
@@ -208,7 +246,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let stop = Arc::clone(&stop);
         let start_gate = Arc::clone(&start_gate);
         let start_time = Arc::clone(&start_time);
-        let prefix = prefix.clone();
+        let gpu_pattern = gpu_pattern.clone();
         let duration = args.duration;
         let trials = args.trials;
         let batch = args.batch;
@@ -244,7 +282,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if count == 0 {
                     break;
                 }
-                match gpu.search_batch(&prefix, 0, end, count, base_counter) {
+                match gpu.search_batch_with_pattern(&gpu_pattern, 0, end, count, base_counter) {
                     Ok(result) => {
                         if result.candidate.is_some() {
                             stop.store(true, Ordering::Relaxed);
@@ -353,7 +391,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if !estimate_printed && completed_batches >= estimate_batches {
                     let local_rate =
                         total as f64 / started.elapsed().as_secs_f64().max(f64::MIN_POSITIVE);
-                    if root {
+                    if root && let Some(expected) = expected {
                         #[cfg(feature = "mpi")]
                         let rate = local_rate * world.size() as f64;
                         #[cfg(not(feature = "mpi"))]

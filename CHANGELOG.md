@@ -2,6 +2,12 @@
 
 All notable changes to `wg-vanity` are documented here.
 
+## Unreleased
+
+- Add literal, glob (`*` and `?`), regular-expression, and optional
+  case-sensitive matching to the CPU CLI.
+- Add CUDA literal/glob matching and report regex mode as CPU-only.
+
 ## 0.5.1 - 2026-08-25
 
 - Detect the lowest compute capability reported by visible GPUs when building

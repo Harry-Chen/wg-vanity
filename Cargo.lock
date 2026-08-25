@@ -1003,6 +1003,7 @@ dependencies = [
  "mpi",
  "num_cpus",
  "rayon",
+ "regex",
  "x25519-dalek",
 ]
 

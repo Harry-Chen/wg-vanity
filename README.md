@@ -46,6 +46,12 @@ wg-vanity dave --duration 30
 
 # Match within the first 16 Base64 characters.
 wg-vanity dave --in 16
+
+# Glob matching supports `*` and `?` (case-insensitive by default).
+wg-vanity --glob 'd?ve*'
+
+# Regular expressions are CPU-only; case-sensitive matching is also available.
+wg-vanity --regex 'dave[0-9]+' --case-sensitive
 ```
 
 The private value in a result is suitable for the `PrivateKey` field of a
@@ -65,7 +71,9 @@ The CUDA binary uses all visible GPUs by default. Use `--gpus N` to select a
 smaller number, or restrict visibility with `CUDA_VISIBLE_DEVICES`. It reports
 the estimated search space and, after measuring the hardware, the expected
 time to find a match. `--trials`, `--duration`, `--batch`, and `--in` provide
-the corresponding search controls.
+the corresponding search controls. CUDA supports literal matching and glob
+patterns with `*` and `?`; `--case-sensitive` applies to both. The general
+regex mode is CPU-only and is rejected by `wg-vanity-cuda`.
 
 A CUDA toolkit is required at build time. When `CUDA_ARCH` is unset, the build
 uses the lowest compute capability reported by visible GPUs, or `compute_80`

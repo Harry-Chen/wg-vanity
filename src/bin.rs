@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use clap::Parser;
 use rayon::prelude::*;
-use wg_vanity::trial;
+use wg_vanity::{PatternKind, SearchPattern, trial_pattern};
 
 #[cfg(feature = "mpi")]
 use mpi::traits::*;
@@ -13,12 +13,11 @@ use mpi::traits::*;
 #[cfg(feature = "mpi")]
 const MPI_SUMMARY_TAG: i32 = 801;
 
-fn estimate_one_trial() -> Duration {
-    let prefix = "prefix";
+fn estimate_one_trial(pattern: &SearchPattern) -> Duration {
     let start = SystemTime::now();
     const COUNT: u32 = 100;
     (0..COUNT).for_each(|_| {
-        trial(prefix, 0, 10);
+        trial_pattern(pattern, 0, 10);
     });
     let elapsed = start.elapsed().unwrap();
     elapsed.checked_div(COUNT).unwrap()
@@ -92,9 +91,21 @@ impl fmt::Display for ParseError {
     about = "Finds WireGuard keypairs with a given string prefix"
 )]
 struct Args {
-    /// NAME must be found within the first RANGE chars of the public key.
+    /// NAME must match within the first RANGE chars of the public key.
     #[arg(long = "in")]
     range: Option<usize>,
+
+    /// Interpret NAME as a glob (`*` and `?`) instead of a literal.
+    #[arg(long, conflicts_with = "regex")]
+    glob: bool,
+
+    /// Interpret NAME as a regular expression (CPU search only).
+    #[arg(long, conflicts_with = "glob")]
+    regex: bool,
+
+    /// Preserve ASCII letter case while matching.
+    #[arg(long)]
+    case_sensitive: bool,
 
     /// Stop after this many candidate keys. Combined with --duration, the first limit wins.
     #[arg(long, value_name = "COUNT")]
@@ -104,7 +115,7 @@ struct Args {
     #[arg(long, value_name = "SECONDS")]
     duration: Option<f64>,
 
-    /// String to find near the start of the public key.
+    /// Literal, glob, or regular expression to find near the start of the public key.
     name: String,
 }
 
@@ -121,14 +132,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     let root = true;
 
     let args = Args::parse();
-    let prefix = args.name.to_ascii_lowercase();
-    let len = prefix.len();
-    let end: usize = 44.min(
-        args.range
-            .unwrap_or_else(|| if len <= 10 { 10 } else { len + 10 }),
-    );
-    if end < len {
-        return Err(ParseError(format!("range {} is too short for len={}", end, len)).into());
+    let kind = if args.glob {
+        PatternKind::Glob
+    } else if args.regex {
+        PatternKind::Regex
+    } else {
+        PatternKind::Literal
+    };
+    let pattern = SearchPattern::new(&args.name, kind, args.case_sensitive)?;
+    let len = pattern.len();
+    let end: usize = 44.min(args.range.unwrap_or_else(|| {
+        if kind == PatternKind::Literal && len > 10 {
+            len + 10
+        } else {
+            10
+        }
+    }));
+    if end == 0 || (kind == PatternKind::Literal && end < len) {
+        return Err(ParseError(format!("search range {} is invalid for this pattern", end)).into());
     }
     if args
         .duration
@@ -137,51 +158,69 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(ParseError("--duration must be a finite positive number".into()).into());
     }
 
-    let offsets = 1 + end - len;
-    let casefolded_letters = prefix.bytes().filter(|c| c.is_ascii_alphabetic()).count();
-    let trials_per_key =
-        64_f64.powi(len as i32) / (offsets as f64 * 2_f64.powi(casefolded_letters as i32));
-    let trials_description = if trials_per_key < 1_000_000.0 {
-        format!("{trials_per_key:.0}")
-    } else {
-        format!("{trials_per_key:.3e}")
-    };
-
     if root {
-        println!(
-            "searching for '{}' in pubkey[0..{}], one of every {} keys should match",
-            prefix, end, trials_description
-        );
+        println!("searching for '{}' in pubkey[0..{}]", args.name, end);
     }
 
-    if trials_per_key < 2_f64.powi(32) {
-        let est = estimate_one_trial();
-        #[cfg(feature = "mpi")]
-        let parallelism = num_cpus::get().saturating_mul(world.size() as usize);
-        #[cfg(not(feature = "mpi"))]
-        let parallelism = num_cpus::get();
-        let spk = duration_to_f64(est) * trials_per_key / parallelism as f64;
-        let kps = 1.0 / spk;
+    if kind == PatternKind::Literal {
+        let offsets = 1 + end - len;
+        let casefolded_letters = if args.case_sensitive {
+            0
+        } else {
+            args.name
+                .bytes()
+                .filter(|c| c.is_ascii_alphabetic())
+                .count()
+        };
+        let trials_per_key =
+            64_f64.powi(len as i32) / (offsets as f64 * 2_f64.powi(casefolded_letters as i32));
+        let trials_description = if trials_per_key < 1_000_000.0 {
+            format!("{trials_per_key:.0}")
+        } else {
+            format!("{trials_per_key:.3e}")
+        };
         if root {
-            #[cfg(feature = "mpi")]
             println!(
-                "one trial takes {}, {} CPU cores/rank, {} MPI ranks",
-                format_time(duration_to_f64(est)),
-                num_cpus::get(),
-                world.size()
-            );
-            #[cfg(not(feature = "mpi"))]
-            println!(
-                "one trial takes {}, CPU cores available: {}",
-                format_time(duration_to_f64(est)),
-                num_cpus::get()
-            );
-            println!(
-                "est yield: {} per key, {}",
-                format_time(spk),
-                format_rate(kps)
+                "one of every {} keys should match{}",
+                trials_description,
+                if args.case_sensitive {
+                    " (case-sensitive)"
+                } else {
+                    " (case-insensitive)"
+                }
             );
         }
+        if trials_per_key < 2_f64.powi(32) {
+            let est = estimate_one_trial(&pattern);
+            #[cfg(feature = "mpi")]
+            let parallelism = num_cpus::get().saturating_mul(world.size() as usize);
+            #[cfg(not(feature = "mpi"))]
+            let parallelism = num_cpus::get();
+            let spk = duration_to_f64(est) * trials_per_key / parallelism as f64;
+            let kps = 1.0 / spk;
+            if root {
+                #[cfg(feature = "mpi")]
+                println!(
+                    "one trial takes {}, {} CPU cores/rank, {} MPI ranks",
+                    format_time(duration_to_f64(est)),
+                    num_cpus::get(),
+                    world.size()
+                );
+                #[cfg(not(feature = "mpi"))]
+                println!(
+                    "one trial takes {}, CPU cores available: {}",
+                    format_time(duration_to_f64(est)),
+                    num_cpus::get()
+                );
+                println!(
+                    "est yield: {} per key, {}",
+                    format_time(spk),
+                    format_rate(kps)
+                );
+            }
+        }
+    } else if root {
+        println!("search-space estimate unavailable for glob/regex patterns");
     }
 
     let started = Instant::now();
@@ -208,7 +247,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let count = CPU_BATCH.min(max_trials - attempted);
         let matches: Vec<_> = (0..count)
             .into_par_iter()
-            .map(|_| trial(&prefix, 0, end))
+            .map(|_| trial_pattern(&pattern, 0, end))
             .filter_map(|result| result)
             .collect();
         for result in matches {
