@@ -26,6 +26,14 @@ cargo install wg-vanity
 wg-vanity dave
 ```
 
+`cuda` and `mpi` are optional features. A CUDA install builds the GPU binary
+and needs `nvcc`; an MPI install needs an MPI implementation and its headers:
+
+```bash
+cargo install wg-vanity --features cuda
+cargo install wg-vanity --features mpi
+```
+
 The search uses all CPU cores. It continues until interrupted, printing every
 matching keypair it finds. Searches can also be bounded:
 
@@ -59,10 +67,10 @@ the estimated search space and, after measuring the hardware, the expected
 time to find a match. `--trials`, `--duration`, `--batch`, and `--in` provide
 the corresponding search controls.
 
-A CUDA toolkit is required at build time. `CUDA_HOME` and `CUDA_ARCH` can be
-used when the toolkit or target architecture cannot be detected from the
-environment. See [docs/CUDA.md](docs/CUDA.md) for implementation and benchmark
-details.
+A CUDA toolkit is required at build time. When `CUDA_ARCH` is unset, the build
+uses the lowest compute capability reported by visible GPUs, or `compute_80`
+when no GPU is available. Set `CUDA_ARCH` explicitly for cross-compilation or
+to choose a different PTX target. See [docs/CUDA.md](docs/CUDA.md) for details.
 
 ## MPI
 

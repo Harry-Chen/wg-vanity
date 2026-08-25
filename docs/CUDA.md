@@ -68,7 +68,8 @@ CUDA_HOME=/usr/local/cuda-13.3 \
 `cuda` is a Cargo feature, not a runtime switch. Without `--features cuda`,
 `src/cuda.rs` and the CUDA binary are not compiled. With the feature enabled,
 `build.rs` invokes `nvcc` and writes `OUT_DIR/vanity_x25519.ptx`; the Rust host
-loads it with `cudarc`. The default target is `compute_120` and can be changed:
+loads it with `cudarc`. The build detects the lowest compute capability among
+visible GPUs, falling back to `compute_80`; `CUDA_ARCH` can override it:
 
 ```bash
 CUDA_HOME=/usr/local/cuda-13.3 CUDA_ARCH=compute_120 \
