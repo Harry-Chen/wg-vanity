@@ -35,6 +35,7 @@ produced:
 | default `x86-64` | 62.17 K keys/s |
 | `znver3` | 64.17 K keys/s |
 | `native` (`znver4`) | 54.71 K keys/s |
+| `native`, forced dalek serial backend | 57.30 K keys/s |
 | `native`, `-avx512f` | 64.30 K keys/s |
 
 Each row is the median of five 300,000-candidate runs with ASLR disabled. The
@@ -48,12 +49,38 @@ is compiled by a native build but is not selected for this path. Disabling the
 precomputed table does exercise IFMA, but the resulting variable-base path
 measured only 55.89 K keys/s because it loses the faster fixed-base algorithm.
 
-The regression comes from LLVM's SLP vectorizer, not from the IFMA backend.
-For `znver4`, LLVM combines the five-limb additions and subtractions at the end
-of a point addition into ZMM operations. The resulting code contains masked
-broadcasts and `vinserti32x4`/`vinserti64x4` repacking on the dependency path.
-Disabling loop vectorization has no effect; either `-C no-vectorize-slp` or
-`-C target-feature=-avx512f` removes this code and restores throughput.
+Two effects make up the regression. First, enabling the otherwise unused IFMA
+backend changes rustc's codegen-unit partitioning. In the native build,
+`AffineNielsPoint::conditional_assign` and `LookupTable::select` land in
+different units; LLVM's inline remark says the callee definition is
+unavailable. Forcing the dalek serial backend makes the helper available and
+raises throughput from 54.71 to 57.30 K keys/s. This is a compilation-layout
+effect, not runtime IFMA execution.
+
+The larger effect is LLVM's SLP code for the constant-time fixed-base lookup.
+The lookup carries 15 field limbs through eight table entries. The `znver4`
+version uses `vpermq`, `vpermt2q`, and `vpternlogq` on ZMM registers and spills
+the intermediate state to the stack between entries. The `-avx512f` build
+keeps SLP enabled but uses a shorter-latency XMM/YMM representation. On Zen 4,
+the two versions retire almost exactly 160 billion instructions for one
+million candidates, but their hardware counters differ:
+
+| Fixed-base lookup build | Cycles | IPC | L1D loads | L1D load misses |
+| --- | ---: | ---: | ---: | ---: |
+| `native`, forced serial | 64.44 B | 2.48 | 49.29 B | 130.0 M |
+| `native`, `-avx512f` | 57.46 B | 2.79 | 43.74 B | 98.1 M |
+
+Thus the ZMM build performs 12.7% more L1D accesses and has 32.6% more L1D
+misses without reducing the retired instruction count. Its lookup alone takes
+about 11.85 billion sampled cycles versus 3.97 billion for the AVX2 version.
+
+There is also a smaller SLP issue in point addition. LLVM combines five-limb
+additions and subtractions into masked broadcasts and
+`vinserti32x4`/`vinserti64x4` repacking on a dependency path. Disabling loop
+vectorization has no effect. Disabling SLP globally only raises full-program
+throughput to 55.57 K keys/s because it removes both the harmful AVX-512 trees
+and useful AVX2 SLP. Disabling AVX-512 is the better workaround because it
+retains the useful vectorization.
 
 The standalone reproducer is in
 [`contrib/llvm-znver4-slp-repro/repro.rs`](../contrib/llvm-znver4-slp-repro/repro.rs).
@@ -66,11 +93,14 @@ On the same node with rustc 1.98.0 and LLVM 22.1.8:
 | `znver4`, `-avx512f` | 8.83 M steps/s | 20.94 B | 72.75 B | 3.47 |
 | `znver4`, no SLP | 8.82 M steps/s | 20.93 B | 72.75 B | 3.48 |
 
-The reduced benchmark has effectively the same retired instruction count, but
-the vectorized build needs 6.4% more cycles. LLVM's optimization remarks score
-the relevant SLP store trees as locally profitable, but do not capture their
-cost on the loop-carried point dependency. LLVM 23.1.0 still reproduces the
-issue, although with a smaller slowdown.
+The reduced benchmark isolates only the point-addition part of the regression.
+It has effectively the same retired instruction count, but the vectorized
+build needs 6.4% more cycles. LLVM's optimization remarks score the relevant
+SLP store trees as locally profitable, but do not capture their cost on the
+loop-carried point dependency. The full-program slowdown is larger because it
+also includes the hotter lookup transformation and the codegen-unit effect
+described above. LLVM 23.1.0 still reproduces the reduced issue, although with
+a smaller slowdown.
 
 Compile and run the reduced case with ASLR disabled for stable layout:
 

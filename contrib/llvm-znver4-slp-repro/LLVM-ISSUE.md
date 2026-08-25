@@ -8,6 +8,11 @@ or AVX-512 restores the scalar performance.
 This was reduced from the serial fixed-base Curve25519 path in
 `curve25519-dalek`. The reproducer has no external dependencies.
 
+This reproducer deliberately isolates the point-addition SLP tree. The larger
+application-level regression also contains a separate SLP transformation in
+the fixed-base lookup and a rustc codegen-unit partitioning effect; those are
+not claimed to be reproduced by this file.
+
 ## Environment
 
 - AMD EPYC 9654 (Zen 4)
