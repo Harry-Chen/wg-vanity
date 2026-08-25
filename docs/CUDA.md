@@ -53,7 +53,9 @@ pattern.
 Regex matching is performed against `public_key[start..end]`, so anchors and
 word boundaries are relative to that slice. Captures are not returned. The
 kernel streams Base64 sextets directly from the public key and executes the
-EOI transition at the end of the selected range.
+EOI transition at the end of the selected range. See
+[CUDA Regex Implementation](CUDA_REGEX.md) for the table layout and kernel
+data flow.
 
 MPI support is optional. Build with the `cuda,mpi` features and launch with the
 MPI environment appropriate for the cluster; each rank uses its local GPUs and

@@ -15,7 +15,8 @@ case-insensitive string within a configurable leading range.
 This project is a modernized refresh of Brian Warner's original
 [`wireguard-vanity-address`](https://github.com/warner/wireguard-vanity-address).
 It preserves the original CPU key search while updating the Rust codebase and
-adding bounded searches, CUDA and multi-GPU acceleration, and MPI scaling.
+adding bounded searches, regex/glob matching, CUDA and multi-GPU acceleration,
+and MPI scaling.
 
 ## CPU usage
 
@@ -87,7 +88,8 @@ uses the lowest compute capability reported by visible GPUs, or `compute_80`
 when no GPU is available. Set `CUDA_ARCH` explicitly for cross-compilation or
 to choose a different PTX target. The build emits PTX rather than a
 GPU-specific cubin; the CUDA driver JIT-compiles that PTX for the running GPU.
-See [docs/CUDA.md](docs/CUDA.md) for details.
+See [docs/CUDA.md](docs/CUDA.md) for details, including the
+[CUDA regex data path](docs/CUDA_REGEX.md).
 
 ## MPI
 

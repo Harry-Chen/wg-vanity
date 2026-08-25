@@ -4,14 +4,17 @@ All notable changes to `wg-vanity` are documented here.
 
 ## Unreleased
 
-- Add literal, glob (`*` and `?`), regular-expression, and optional
-  case-sensitive matching to the CPU CLI.
-- Add CUDA literal/glob matching and bounded regex matching.
+## 0.6.0 - 2026-08-25
+
+- Add literal, glob (`*` and `?`), and regular-expression matching with
+  optional case-sensitive behavior to the CPU and CUDA CLIs.
+- Compile CUDA regexes into a bounded Base64 DFA, with EOI handling, compact
+  transitions, explicit size limits, and one table upload per GPU.
+- Add prepared GPU patterns, a streaming Base64 regex kernel, and CUDA matcher
+  differential tests without transferring candidate strings to the host.
 - Stop CPU searches after the first match, including coordinated MPI ranks.
-- Add a Criterion comparison for literal and precompiled-regex matching.
-- Include glob versus equivalent-regex matcher timings in the benchmark suite.
-- Add bounded CUDA regex matching through a compact Base64 DFA with explicit
-  size limits and per-GPU prepared tables.
+- Add Criterion comparisons for literal, glob, and precompiled-regex matching.
+- Document CUDA regex semantics, resource limits, and the GPU data path.
 
 ## 0.5.1 - 2026-08-25
 
