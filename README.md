@@ -34,8 +34,8 @@ cargo install wg-vanity --features cuda
 cargo install wg-vanity --features mpi
 ```
 
-The search uses all CPU cores. It continues until interrupted, printing every
-matching keypair it finds. Searches can also be bounded:
+The search uses all CPU cores and stops after the first matching keypair.
+Searches can also be bounded:
 
 ```bash
 # Search at most one million candidates.

@@ -8,6 +8,8 @@ use rayon::prelude::*;
 use wg_vanity::{PatternKind, SearchPattern, trial_pattern};
 
 #[cfg(feature = "mpi")]
+use mpi::collective::SystemOperation;
+#[cfg(feature = "mpi")]
 use mpi::traits::*;
 
 #[cfg(feature = "mpi")]
@@ -243,6 +245,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     const CPU_BATCH: u64 = 100_000;
     let mut attempted = 0u64;
+    #[cfg(not(feature = "mpi"))]
     while attempted < max_trials && deadline.is_none_or(|limit| Instant::now() < limit) {
         let count = CPU_BATCH.min(max_trials - attempted);
         let matches: Vec<_> = (0..count)
@@ -250,10 +253,76 @@ fn main() -> Result<(), Box<dyn Error>> {
             .map(|_| trial_pattern(&pattern, 0, end))
             .filter_map(|result| result)
             .collect();
-        for result in matches {
-            print(result)?;
-        }
         attempted += count;
+        if let Some(result) = matches.into_iter().next() {
+            print(result)?;
+            break;
+        }
+    }
+    #[cfg(feature = "mpi")]
+    loop {
+        let active = attempted < max_trials && deadline.is_none_or(|limit| Instant::now() < limit);
+        let found = if active {
+            let count = CPU_BATCH.min(max_trials - attempted);
+            let matches: Vec<_> = (0..count)
+                .into_par_iter()
+                .map(|_| trial_pattern(&pattern, 0, end))
+                .filter_map(|result| result)
+                .collect();
+            attempted += count;
+            matches.into_iter().next()
+        } else {
+            None
+        };
+
+        let local_found = i32::from(found.is_some());
+        let mut global_found = 0;
+        world.all_reduce_into(&local_found, &mut global_found, SystemOperation::max());
+        if global_found != 0 {
+            let mut payload = [0u8; 89];
+            if let Some((private, public)) = found {
+                payload[0] = 1;
+                payload[1..45].copy_from_slice(private.as_bytes());
+                payload[45..89].copy_from_slice(public.as_bytes());
+            }
+            if root {
+                let mut selected = if payload[0] == 1 {
+                    Some((
+                        String::from_utf8(payload[1..45].to_vec())?,
+                        String::from_utf8(payload[45..89].to_vec())?,
+                    ))
+                } else {
+                    None
+                };
+                for source in 1..world.size() {
+                    let (received, _) = world.process_at_rank(source).receive_vec::<u8>();
+                    if received.len() != 89 {
+                        return Err(
+                            format!("MPI rank {source} sent an invalid match payload").into()
+                        );
+                    }
+                    if selected.is_none() && received[0] == 1 {
+                        selected = Some((
+                            String::from_utf8(received[1..45].to_vec())?,
+                            String::from_utf8(received[45..89].to_vec())?,
+                        ));
+                    }
+                }
+                if let Some(result) = selected {
+                    print(result)?;
+                }
+            } else {
+                world.process_at_rank(0).send(&payload[..]);
+            }
+            break;
+        }
+
+        let local_done = i32::from(!active);
+        let mut global_done = 0;
+        world.all_reduce_into(&local_done, &mut global_done, SystemOperation::min());
+        if global_done != 0 {
+            break;
+        }
     }
     let elapsed = started.elapsed().as_secs_f64();
     #[cfg(feature = "mpi")]
