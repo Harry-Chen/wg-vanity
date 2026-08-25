@@ -8,10 +8,10 @@ or AVX-512 restores the scalar performance.
 This was reduced from the serial fixed-base Curve25519 path in
 `curve25519-dalek`. The reproducer has no external dependencies.
 
-This reproducer deliberately isolates the point-addition SLP tree. The larger
-application-level regression also contains a separate SLP transformation in
-the fixed-base lookup and a rustc codegen-unit partitioning effect; those are
-not claimed to be reproduced by this file.
+This reproducer deliberately isolates the point-addition SLP tree. The full
+application has two LLVM SLP regressions and a separate rustc codegen-unit
+partitioning effect. The latter is not an LLVM optimizer bug and is not
+claimed to be reproduced by this file.
 
 ## Environment
 
@@ -21,6 +21,56 @@ not claimed to be reproduced by this file.
 
 LLVM 23.1.0 from rustc nightly 1.100.0-nightly still reproduces the regression,
 although the slowdown is smaller.
+
+## Scope and issue ownership
+
+The full application measurements decompose the regression as follows:
+
+| Configuration | Throughput |
+| --- | ---: |
+| `native` (`znver4`) | 54.71 K keys/s |
+| `native`, curve25519-dalek serial backend forced | 57.30 K keys/s |
+| `native`, `-avx512f` | 64.30 K keys/s |
+
+There are three relevant effects:
+
+1. The point-addition SLP transformation reproduced here is an LLVM X86 cost
+   model issue. It is legal code generation, but unprofitable on Zen 4.
+2. A hotter constant-time fixed-base lookup has another unprofitable LLVM SLP
+   transformation. The ZMM form uses `vpermq`, `vpermt2q`, and `vpternlogq`
+   with stack spill/reload traffic between table entries. Compared with the
+   AVX2 form, it retires effectively the same number of instructions but uses
+   12.7% more L1D accesses and has 32.6% more L1D load misses.
+3. Enabling curve25519-dalek's otherwise unused AVX-512 IFMA backend changes
+   rustc's codegen-unit partitioning. `AffineNielsPoint::conditional_assign`
+   and `LookupTable::select` then land in different LLVM modules, and the
+   inline remark reports that the callee definition is unavailable. LLVM
+   cannot inline a definition that is absent from its module without LTO.
+
+The third effect is therefore best investigated as a rustc codegen-unit
+partitioning and cross-CGU inlining issue, not as part of this LLVM report. It
+is not yet clear whether rustc would consider that sensitivity a compiler bug
+or an accepted multiple-CGU tradeoff; it needs a separate reduced reproducer.
+Compiling the unused IFMA backend is the trigger, not evidence that IFMA code
+is executed. An explicit inline attribute in curve25519-dalek or isolating the
+optional backend may mitigate it, but neither is a substitute for fixing the
+LLVM cost model.
+
+Forcing the serial backend recovers about 4.7% (54.71 to 57.30 K keys/s).
+Disabling AVX-512 while retaining SLP then recovers another 12.2% (57.30 to
+64.30 K keys/s). These factors compose to the measured 17.5% end-to-end gain.
+The 6.4% result below is smaller because this reproducer contains only the
+point-addition tree; it does not contain the hotter lookup or the CGU effect.
+
+The practical workaround addresses both compiler effects:
+
+```bash
+RUSTFLAGS="-C target-cpu=native -C target-feature=-avx512f" cargo build --release
+```
+
+It prevents the unused IFMA backend from changing the CGU layout and makes
+LLVM choose the faster AVX2 SLP representation. Globally disabling SLP is a
+worse workaround because it also removes profitable AVX2 vectorization.
 
 ## Reproduction
 
@@ -86,5 +136,11 @@ latency is therefore on a loop-carried dependency chain.
 The `znver4` cost model should reject this SLP transformation, or choose a
 narrower representation that avoids the ZMM packing chain. Targeting Zen 4
 should not be slower than `znver3` for this workload.
+
+The likely LLVM fix belongs in X86 TTI/ScheduleModel or SLP profitability:
+the cost needs to account for 512-bit permutation and repacking latency,
+memory operands and spill pressure, and the dependency chain between adjacent
+point operations. The fixed-base lookup should be reduced separately before
+filing because this reproducer covers only the point-addition tree.
 
 Possibly related, but with different transformations: #91370 and #87640.
