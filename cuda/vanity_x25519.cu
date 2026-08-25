@@ -472,10 +472,15 @@ __device__ __forceinline__ bool regex_match_base64(
   constexpr uint32_t kDfaDead = 1u << 30;
   constexpr uint32_t kDfaStateMask = (1u << 30) - 1;
   uint32_t state = 0;
-  for (uint32_t position = start; position < end; ++position) {
-    const uint32_t edge = position == 43
-        ? equals[state]
-        : transitions[(state << 6) | base64_sextet_at(public_key, position)];
+  const uint32_t regular_end = end < 43 ? end : 43;
+  for (uint32_t position = start; position < regular_end; ++position) {
+    const uint32_t edge = transitions[(state << 6) | base64_sextet_at(public_key, position)];
+    if (edge & kDfaMatch) return true;
+    if (edge & kDfaDead) return false;
+    state = edge & kDfaStateMask;
+  }
+  if (start <= 43 && end > 43) {
+    const uint32_t edge = equals[state];
     if (edge & kDfaMatch) return true;
     if (edge & kDfaDead) return false;
     state = edge & kDfaStateMask;
@@ -492,16 +497,15 @@ extern "C" __global__ void vanity_regex_kernel(
   const bool active = tid < count && *found < 0;
   if (!active) return;
 
-  uint8_t private_key[32], public_key[32], stream[64];
+  uint8_t public_key[32], stream[64];
   chacha20_block(stream, seed, base_counter + tid);
-  for (int i = 0; i < 32; ++i) private_key[i] = stream[i];
   const uint8_t basepoint[32] = {9};
-  x25519(public_key, private_key, basepoint);
+  x25519(public_key, stream, basepoint);
 
   if (regex_match_base64(public_key, start, end, transitions, equals, eoi_match) &&
       atomicCAS(found, -1, (int)tid) == -1) {
     for (int i = 0; i < 32; ++i) {
-      private_out[i] = private_key[i];
+      private_out[i] = stream[i];
       public_out[i] = public_key[i];
     }
   }
