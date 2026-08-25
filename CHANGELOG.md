@@ -4,6 +4,9 @@ All notable changes to `wg-vanity` are documented here.
 
 ## Unreleased
 
+- Document and reduce an LLVM `znver4` SLP-vectorization regression in the
+  serial X25519 fixed-base path, including a targeted AVX-512 workaround.
+
 ## 0.6.0 - 2026-08-25
 
 - Add literal, glob (`*` and `?`), and regular-expression matching with

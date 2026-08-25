@@ -17,6 +17,7 @@ repository = "https://github.com/Harry-Chen/wg-vanity"
 exclude = [
     "**/.gitignore",
     ".gitignore",
+    "contrib",
 ]
 
 [dependencies]
