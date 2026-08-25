@@ -135,11 +135,6 @@ __device__ __forceinline__ void fe_add_mul_const(fe out, const fe a, const fe b,
   fe_reduce(h0, h1, h2, h3, h4, out);
 }
 
-__device__ __forceinline__ void fe_mul_const(fe out, const fe a, u64 constant) {
-  fe zero = {0, 0, 0, 0, 0};
-  fe_add_mul_const(out, zero, a, constant);
-}
-
 __device__ __forceinline__ void fe_select(fe p, fe q, int bit) {
   const u64 mask = -(u64)bit;
   for (int i = 0; i < 5; ++i) {
@@ -298,9 +293,8 @@ __device__ void x25519(uint8_t out[32], const uint8_t scalar_in[32],
     fe_mul(x2, tmp1, tmp0);
     fe_sub(tmp1, tmp1, tmp0);
     fe_square(z2, z2);
-    fe_mul_const(z3, tmp1, 121666);
     fe_square(x3, x3);
-    fe_add(tmp0, tmp0, z3);
+    fe_add_mul_const(tmp0, tmp0, tmp1, 121666);
     fe_mul(z3, x1, z2);
     fe_mul(z2, tmp1, tmp0);
   }
