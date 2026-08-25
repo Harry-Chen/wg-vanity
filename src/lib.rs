@@ -123,29 +123,22 @@ impl SearchPattern {
         let haystack = &encoded[start..end];
         match self.kind {
             PatternKind::Literal => {
-                let normalized = if self.case_sensitive {
-                    haystack.to_vec()
-                } else {
+                if self.bytes.is_empty() {
+                    true
+                } else if self.case_sensitive {
                     haystack
-                        .iter()
-                        .map(|byte| byte.to_ascii_lowercase())
-                        .collect()
-                };
-                normalized
-                    .windows(self.bytes.len())
-                    .any(|window| window == self.bytes.as_slice())
-            }
-            PatternKind::Glob => {
-                let normalized = if self.case_sensitive {
-                    haystack.to_vec()
+                        .windows(self.bytes.len())
+                        .any(|window| window == self.bytes.as_slice())
                 } else {
-                    haystack
-                        .iter()
-                        .map(|byte| byte.to_ascii_lowercase())
-                        .collect()
-                };
-                glob_matches(&normalized, &self.bytes)
+                    haystack.windows(self.bytes.len()).any(|window| {
+                        window
+                            .iter()
+                            .zip(&self.bytes)
+                            .all(|(input, pattern)| input.to_ascii_lowercase() == *pattern)
+                    })
+                }
             }
+            PatternKind::Glob => glob_matches(haystack, &self.bytes, self.case_sensitive),
             PatternKind::Regex => self
                 .regex
                 .as_ref()
@@ -154,11 +147,11 @@ impl SearchPattern {
     }
 }
 
-fn glob_matches(haystack: &[u8], pattern: &[u8]) -> bool {
-    (0..=haystack.len()).any(|start| glob_matches_at(&haystack[start..], pattern))
+fn glob_matches(haystack: &[u8], pattern: &[u8], case_sensitive: bool) -> bool {
+    (0..=haystack.len()).any(|start| glob_matches_at(&haystack[start..], pattern, case_sensitive))
 }
 
-fn glob_matches_at(text: &[u8], pattern: &[u8]) -> bool {
+fn glob_matches_at(text: &[u8], pattern: &[u8], case_sensitive: bool) -> bool {
     let mut text_index = 0;
     let mut pattern_index = 0;
     let mut star_index = None;
@@ -169,7 +162,15 @@ fn glob_matches_at(text: &[u8], pattern: &[u8]) -> bool {
         }
         if pattern_index < pattern.len()
             && pattern[pattern_index] != b'*'
-            && (pattern[pattern_index] == b'?' || pattern[pattern_index] == text[text_index])
+            && (pattern[pattern_index] == b'?' || {
+                let input = text[text_index];
+                let expected = pattern[pattern_index];
+                if case_sensitive {
+                    input == expected
+                } else {
+                    input.to_ascii_lowercase() == expected
+                }
+            })
         {
             pattern_index += 1;
             text_index += 1;
@@ -226,10 +227,16 @@ pub fn trial_pattern(
 ) -> Option<(String, String)> {
     let private = StaticSecret::random();
     let public = PublicKey::from(&private);
-    let public_b64 = STANDARD.encode(public.as_bytes());
-    if pattern.is_match(public_b64.as_bytes(), start, end) {
+    let mut public_b64 = [0u8; 44];
+    let public_len = STANDARD
+        .encode_slice(public.as_bytes(), &mut public_b64)
+        .expect("32-byte public keys always fit in a 44-byte Base64 buffer");
+    if pattern.is_match(&public_b64[..public_len], start, end) {
         let private_b64 = STANDARD.encode(private.to_bytes());
-        Some((private_b64, public_b64))
+        Some((
+            private_b64,
+            String::from_utf8(public_b64[..public_len].to_vec()).unwrap(),
+        ))
     } else {
         None
     }
@@ -253,6 +260,10 @@ mod tests {
         let pattern = SearchPattern::new("a*?z", PatternKind::Glob, false).unwrap();
         assert!(pattern.is_match(b"xxAbcZyy", 0, 8));
         assert!(!pattern.is_match(b"xxAbcZyy", 0, 5));
+
+        let sensitive = SearchPattern::new("A*Z", PatternKind::Glob, true).unwrap();
+        assert!(sensitive.is_match(b"xxAbcZyy", 0, 8));
+        assert!(!sensitive.is_match(b"xxabczyy", 0, 8));
     }
 
     #[test]

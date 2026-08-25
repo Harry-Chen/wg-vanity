@@ -248,13 +248,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(not(feature = "mpi"))]
     while attempted < max_trials && deadline.is_none_or(|limit| Instant::now() < limit) {
         let count = CPU_BATCH.min(max_trials - attempted);
-        let matches: Vec<_> = (0..count)
+        let found = (0..count)
             .into_par_iter()
-            .map(|_| trial_pattern(&pattern, 0, end))
-            .filter_map(|result| result)
-            .collect();
+            .find_map_any(|_| trial_pattern(&pattern, 0, end));
         attempted += count;
-        if let Some(result) = matches.into_iter().next() {
+        if let Some(result) = found {
             print(result)?;
             break;
         }
@@ -264,13 +262,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         let active = attempted < max_trials && deadline.is_none_or(|limit| Instant::now() < limit);
         let found = if active {
             let count = CPU_BATCH.min(max_trials - attempted);
-            let matches: Vec<_> = (0..count)
+            let found = (0..count)
                 .into_par_iter()
-                .map(|_| trial_pattern(&pattern, 0, end))
-                .filter_map(|result| result)
-                .collect();
+                .find_map_any(|_| trial_pattern(&pattern, 0, end));
             attempted += count;
-            matches.into_iter().next()
+            found
         } else {
             None
         };

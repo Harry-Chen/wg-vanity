@@ -14,6 +14,8 @@ All notable changes to `wg-vanity` are documented here.
   differential tests without transferring candidate strings to the host.
 - Stop CPU searches after the first match, including coordinated MPI ranks.
 - Add Criterion comparisons for literal, glob, and precompiled-regex matching.
+- Avoid per-candidate CPU Base64 and case-folding allocations, and stop Rayon
+  batch work after the first match is found.
 - Document CUDA regex semantics, resource limits, and the GPU data path.
 
 ## 0.5.1 - 2026-08-25
