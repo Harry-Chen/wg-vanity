@@ -101,21 +101,21 @@ CUDA_HOME=/usr/local/cuda-13.3 \
   --trials 8000000 --batch 8000000
 ```
 
-## RTX 5090 results
+## Performance results
 
-Environment: RTX 5090 (SM 12.0, 32 GiB), NVIDIA driver 610.57.04, CUDA
-Toolkit 13.3.
+Environment: one RTX 5090 (SM 12.0, 32 GiB), two AMD EPYC 9654 CPUs,
+NVIDIA driver 610.57.04, CUDA Toolkit 13.3, and rustc 1.98.0.
 
-One long-batch run on 2026-08-24:
+Median throughput from three runs on 2026-08-25:
 
 | Backend | Candidates | Time | Throughput |
 | --- | ---: | ---: | ---: |
-| CPU + Rayon | 16,000,000 | 3.517 s | 4.55 M keys/s |
-| CUDA + Rust host | 16,000,000 | 0.337 s | 47.54 M keys/s |
+| CPU + Rayon (384 threads) | 32,000,000 | 2.959 s | 10.81 M keys/s |
+| CUDA + Rust host (1 GPU) | 64,000,000 | 1.321 s | 48.45 M keys/s |
 
 The CUDA number includes per-batch copies, kernel launch, and synchronization,
-but excludes initial CUDA context creation. This is about 10.45x faster than
-the CPU path.
+but excludes initial CUDA context creation. One GPU is about 4.48x faster than
+the full CPU node for this workload.
 
 The initial 16-limb kernel used 255 registers per thread and generated 48B of
 spill stores and loads. The current version uses 5x51-bit field limbs,
@@ -123,6 +123,25 @@ dedicated squaring, and addition-chain inversion: 128 registers per thread and
 zero spills. Nsight Compute reported about 80.6% compute throughput and 0.3%
 memory throughput. Dedicated squaring added roughly 15% throughput over the
 generic multiply-based square.
+
+### CPU target tuning
+
+`-C target-cpu=native` is not automatically faster for this workload. A
+single-thread, CPU-pinned comparison on the same EPYC 9654 host produced:
+
+| Rust target | Throughput | Cycles/candidate | IPC |
+| --- | ---: | ---: | ---: |
+| default `x86-64` | 62.54 K keys/s | 58,877 | 3.51 |
+| `x86-64-v3` | 62.83 K keys/s | 58,596 | 2.72 |
+| `native` (`znver4`) | 54.96 K keys/s | 66,981 | 2.41 |
+
+`perf` attributes nearly all runtime to the fixed-base X25519 path, with field
+multiplication alone taking roughly half of the cycles. All variants held the
+same 3.68 GHz effective clock and had negligible cache misses. The native
+build selected a shorter BMI2-heavy multiplication schedule, but exposed less
+instruction-level parallelism on this CPU. The default portable build remains
+the recommended release configuration; target tuning should be benchmarked on
+the deployment CPU instead of enabled unconditionally.
 
 Long-running searches should use `--duration`, `--trials`, or `--batches`.
 The `--batch` value controls both throughput and the granularity at which a
